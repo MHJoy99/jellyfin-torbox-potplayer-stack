@@ -1,0 +1,30 @@
+# ==============================================================================
+# Rclone Configuration Template (Sanitized)
+# Target Location: %APPDATA%\rclone\rclone.conf or E:\MediaServer\config\rclone.conf
+# ==============================================================================
+
+[gdrive]
+type = drive
+client_id = YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com
+client_secret = YOUR_GOOGLE_CLIENT_SECRET
+scope = drive
+token = {"access_token":"YOUR_ACCESS_TOKEN","token_type":"Bearer","refresh_token":"YOUR_REFRESH_TOKEN","expiry":"2026-12-31T00:00:00Z"}
+team_drive = 
+
+[torbox]
+type = webdav
+url = https://webdav.torbox.app
+vendor = other
+user = YOUR_TORBOX_USERNAME_OR_EMAIL
+pass = YOUR_ENCRYPTED_OR_PLAIN_TOKEN_OR_PASS
+# Note: Use `rclone obscure YOUR_PASSWORD` to generate obfuscated password string.
+
+[racknerd_sftp]
+type = sftp
+host = YOUR_SERVER_IP_OR_HOSTNAME
+user = root
+port = 22
+pass = YOUR_SFTP_OBSCURED_PASSWORD
+key_file = E:\MediaServer\config\id_rsa
+use_insecure_cipher = false
+disable_hashcheck = false

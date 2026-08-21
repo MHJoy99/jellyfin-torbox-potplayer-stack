@@ -1,0 +1,41 @@
+# Git Ignore for Jellyfin Media Server Stack
+
+# Sensitive Configurations & Tokens
+*.conf
+!config/rclone.conf.template
+*.token
+*.key
+*.secret
+.env
+.env.local
+
+# Logs and Runtime State
+logs/
+*.log
+launcher_debug.log
+
+# Caches and Transcoding Buffers
+cache/
+transcodes/
+data/
+*.dpl
+season_playlist.dpl
+test_playlist.dpl
+
+# Backups & Temporary files
+task_backup.xml
+*.tmp
+*.bak
+
+# Playwright artifacts
+.playwright-mcp/
+screenshots/
+jellyfin_live_dashboard.png
+jellyfin_season_dom_marked.png
+jellyfin_season_marked.png
+jellyfin_season_view.png
+
+# Binaries & Executables
+*.exe
+*.dll
+server/

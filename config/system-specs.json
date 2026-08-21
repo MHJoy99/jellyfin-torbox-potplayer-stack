@@ -1,0 +1,74 @@
+{
+  "system": {
+    "hostname": "MEDIA-SERVER",
+    "os": "Windows 11 Pro 64-bit",
+    "architecture": "x86_64"
+  },
+  "cpu": {
+    "model": "AMD Ryzen 7 7800X3D / Intel Core i7-14700K",
+    "cores": 8,
+    "threads": 16,
+    "base_clock_ghz": 4.2,
+    "boost_clock_ghz": 5.0
+  },
+  "memory": {
+    "total_gb": 32,
+    "type": "DDR5",
+    "speed_mhz": 6000,
+    "channels": 2
+  },
+  "gpu": {
+    "model": "NVIDIA GeForce RTX 5070",
+    "vram_gb": 12,
+    "vram_type": "GDDR7",
+    "driver_version": "572.16",
+    "nvenc_generation": "9th Gen NVENC",
+    "supported_codecs": [
+      "H.264 (AVC)",
+      "H.265 (HEVC 8/10/12-bit)",
+      "AV1 (10-bit)",
+      "VP9"
+    ],
+    "capabilities": {
+      "concurrent_sessions": "Unlimited (Consumer driver unlocked)",
+      "hardware_tonemapping": true,
+      "cuda_compute_capability": "10.0"
+    }
+  },
+  "storage": {
+    "os_and_system": {
+      "drive_letter": "C:",
+      "type": "NVMe PCIe 4.0 SSD",
+      "capacity_gb": 1000,
+      "mount_point": "C:\\"
+    },
+    "media_transcode_cache": {
+      "drive_letter": "E:",
+      "type": "NVMe PCIe 4.0 SSD",
+      "capacity_gb": 2000,
+      "mount_point": "E:\\MediaServer",
+      "roles": [
+        "Jellyfin Transcode Directory",
+        "Rclone VFS Cache",
+        "Metadata & Cache Storage",
+        "Scripts and Configurations"
+      ]
+    },
+    "vfs_cache_allocation_gb": 200,
+    "transcode_temp_allocation_gb": 50
+  },
+  "services": {
+    "jellyfin": {
+      "http_port": 8096,
+      "https_port": 8920,
+      "hardware_acceleration": "NVENC",
+      "enable_tone_mapping": true
+    },
+    "rclone": {
+      "mount_letter": "X:",
+      "vfs_cache_mode": "full",
+      "vfs_cache_max_size": "200G",
+      "vfs_cache_max_age": "24h"
+    }
+  }
+}
