@@ -817,7 +817,8 @@ Write-Host "HTTP Server listening on prefixes: $($listener.Prefixes -join ', ')"
 # Cached metrics buffer to prevent disk/CPU hammering on rapid scrapes
 $script:LastScrapeTime = [DateTime]::MinValue
 $script:CachedMetrics = ""
-$script:CacheLock = [System.Object]::new()
+$script:CacheLock = [System.Threading.Monitor]
+$script:LockObj = [System.Object]::new()
 
 try {
     while ($listener.IsListening) {
@@ -829,17 +830,24 @@ try {
         if ($path -eq "/metrics" -or $path -eq "/" -or $path -eq "/metrics/") {
             $now = [DateTime]::UtcNow
             $needsRefresh = $false
-            lock ($script:CacheLock) {
+            
+            [System.Threading.Monitor]::Enter($script:LockObj)
+            try {
                 if (($now - $script:LastScrapeTime).TotalSeconds -ge 1.0 -or [string]::IsNullOrEmpty($script:CachedMetrics)) {
                     $needsRefresh = $true
                 }
+            } finally {
+                [System.Threading.Monitor]::Exit($script:LockObj)
             }
 
             if ($needsRefresh) {
                 $newMetrics = Collect-AllMetrics
-                lock ($script:CacheLock) {
+                [System.Threading.Monitor]::Enter($script:LockObj)
+                try {
                     $script:CachedMetrics = $newMetrics
                     $script:LastScrapeTime = [DateTime]::UtcNow
+                } finally {
+                    [System.Threading.Monitor]::Exit($script:LockObj)
                 }
             }
 
