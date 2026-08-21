@@ -39,3 +39,4 @@ jellyfin_season_view.png
 *.exe
 *.dll
 server/
+n*.zipn*.pycn
