@@ -426,7 +426,10 @@ class MediaLibraryProcessor:
         is_sdh = "sdh" in name_parts or "cc" in name_parts
 
         lang = "eng"
-        for part in name_parts:
+        # Search backward from the extension parts to avoid false matches in title
+        for part in reversed(name_parts):
+            if part in ["default", "forced", "sdh", "cc"]:
+                continue
             if part in LANGUAGE_CODES:
                 _, lang = normalize_lang_code(part)
                 break
