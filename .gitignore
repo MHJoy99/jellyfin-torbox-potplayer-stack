@@ -1,0 +1,29 @@
+# Jellyfin binaries + runtime (reinstalled, never committed)
+server/*
+!server/torbox-proxy.py
+server/__pycache__/
+
+# Runtime / generated
+logs/
+cache/
+transcodes/
+data/
+run/
+backups/
+config/
+*.log
+*.state.json
+*.bak-*
+__pycache__/
+.playwright-mcp/
+
+# Local agent state
+.kilo/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Doc screenshots (local only)
+control-panel-*.png
+
