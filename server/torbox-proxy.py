@@ -24,7 +24,8 @@ from requests.exceptions import Timeout
 
 # NOTE: HTTP/1.0 must stay (protocol_version = "HTTP/1.0" below).
 # HTTP/1.1 hangs on missing Content-Length with PotPlayer; do not upgrade.
-# NOTE: TorBox API requires ?token= query auth (header-only gives HTTP 422).
+# NOTE: TorBox API uses `Authorization: Bearer <key>` header auth (verified 2026-09-05:
+# ?token= query auth returns {"detail":"Not authenticated"} — do NOT switch back).
 # NOTE: API key comes ONLY from $env:TORBOX_API_KEY (never hardcode secrets).
 
 TORBOX_API_KEY = (os.environ.get("TORBOX_API_KEY") or "").strip()
