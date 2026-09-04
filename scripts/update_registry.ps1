@@ -1,34 +1,34 @@
 <#
 .SYNOPSIS
-    Registers custom potplayer:// and potplayer64:// protocol handlers in Windows Registry.
+    Updates the potplayer:// protocol handler to use the robust wrapper launcher.
 .DESCRIPTION
-    Ensures PotPlayer is launched cleanly when custom URI schemes are invoked from Jellyfin Web,
-    browsers, or external scrobblers/trackers. Requires Administrator privileges.
+    Points HKEY_CLASSES_ROOT\potplayer at the wrapper launcher script so playback
+    URLs are handled consistently. Safe to re-run: matching values are left alone.
 
     InstallOps hardening (10 features):
-      1. Idempotent re-runs (matching handler values are left in place / updated).
+      1. Idempotent re-runs (current value compared; upgrade in place).
       2. Admin-rights check with friendly message + self-elevate offer.
-      3. Post-creation verification (registry values read back; scheduled-task
-         verification helper included for orchestrated scenarios).
+      3. Post-write verification (values read back; scheduled-task helper
+         included for orchestrated scenarios).
       4. Rollback on failure (re-imports .reg backups).
-      5. -Uninstall switch (removes potplayer/potplayer64 protocol keys).
+      5. -Uninstall switch (removes the potplayer key, restorable from .reg).
       6. Registry backup (.reg export) before any write.
-      7. rclone.conf ACL helper included; skipped with a note (no rclone.conf here).
+      7. rclone.conf ACL helper included; skipped with a note (no rclone.conf).
       8. Version stamp file after successful install.
-      9. Preflight checks (pwsh version, PotPlayer/launcher paths).
-     10. Called by install-all.ps1 in dependency order.
+      9. Preflight checks (pwsh version, launcher path).
+     10. Called by install-all.ps1 in dependency order (before lock_registry).
 
     Never hardcodes secrets: all paths are parameters, no tokens or passwords.
 #>
 
 param (
-    [string]$PotPlayerExe = "",
+    [string]$LauncherScript = 'F:\Jellyfin\potplayer-launcher.ps1',
     [string]$VersionDir = "",
     [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptName = 'register-potplayer-protocol'
+$ScriptName = 'update_registry'
 $ScriptVersion = '1.0.0'
 
 #region InstallOps shared helpers
@@ -143,7 +143,8 @@ function Restore-RegistryBackups {
 
 function Confirm-ScheduledTaskExists {
     param([string]$TaskName)
-    # F3: scheduled-task existence verification after creation.
+    # F3: scheduled-task existence verification (for orchestrated/task scenarios;
+    # this registry installer creates no scheduled task itself).
     $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     if (-not $t) { throw "Scheduled task '$TaskName' was not found after creation." }
     $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -153,7 +154,7 @@ function Confirm-ScheduledTaskExists {
 
 function Lock-RcloneConfAcl {
     param([string]$Path)
-    # F7: ACL lockdown helper (N/A here: this installer never touches rclone.conf).
+    # F7 helper (N/A here: this installer never touches rclone.conf).
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         Write-Host "[*] No rclone.conf managed by this installer; skipping ACL lockdown." -ForegroundColor Gray
         return $false
@@ -190,153 +191,68 @@ function Remove-VersionStamp {
     $out = Join-Path $script:VersionDir ("$Name.version.json")
     if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force }
 }
-
-function Ensure-HkcrDrive {
-    if (-not (Get-PSDrive -Name HKCR -ErrorAction SilentlyContinue)) {
-        New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT -Scope Script | Out-Null
-    }
-}
 #endregion
 
 # F2: Admin-rights check with friendly message + self-elevate offer.
 if (-not (Test-IsAdmin)) {
-    Request-Elevation -Reason 'Registering a protocol handler writes to HKEY_CLASSES_ROOT.'
+    Request-Elevation -Reason 'Updating the protocol handler writes to HKEY_CLASSES_ROOT.'
 }
 
 if ($Uninstall) {
-    # F5: Uninstall path (registry backup first so removal is recoverable).
-    Ensure-HkcrDrive
+    # F5: Uninstall path (backup first so removal is recoverable from .reg).
     [void](Backup-RegistryKey -RegPath 'HKCR\potplayer')
-    [void](Backup-RegistryKey -RegPath 'HKCR\potplayer64')
-    foreach ($proto in @('potplayer', 'potplayer64')) {
-        $key = "HKCR:\$proto"
-        if (Test-Path -LiteralPath $key) {
-            Remove-Item -LiteralPath $key -Recurse -Force
-            Write-Host "[remove] Deleted protocol key $key" -ForegroundColor Yellow
-        } else {
-            Write-Host "[*] Protocol key $key already absent." -ForegroundColor Gray
-        }
+    $key = 'Registry::HKEY_CLASSES_ROOT\potplayer'
+    if (Test-Path -LiteralPath $key) {
+        Remove-Item -LiteralPath $key -Recurse -Force
+        Write-Host "[remove] Deleted registry key $key" -ForegroundColor Yellow
+    } else {
+        Write-Host "[*] Registry key $key already absent." -ForegroundColor Gray
     }
     Remove-VersionStamp -Name $ScriptName
-    Write-Host "[SUCCESS] potplayer:// protocol handlers uninstalled." -ForegroundColor Green
+    Write-Host "[SUCCESS] potplayer handler (wrapper) uninstalled." -ForegroundColor Green
     exit 0
 }
 
 try {
-    # F9: preflight (pwsh version; PotPlayer path resolution happens below).
+    # F9: preflight (pwsh version, launcher path must exist).
     if ($PSVersionTable.PSVersion -lt [version]'7.0') {
         throw ("pwsh 7.0+ is required (found {0}). Install PowerShell 7 and re-run." -f $PSVersionTable.PSVersion)
     }
     Write-Host ("[+] Preflight: pwsh {0} OK" -f $PSVersionTable.PSVersion) -ForegroundColor Green
-
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "   PotPlayer Custom URI Protocol Registration Utility      " -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-
-    Ensure-HkcrDrive
-
-    # 1. Locate PotPlayer Executable
-    $potentialPaths = @(
-        "C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe",
-        "C:\Program Files\DAUM\PotPlayer\PotPlayer64.exe",
-        "C:\Program Files (x86)\DAUM\PotPlayer\PotPlayerMini.exe",
-        "C:\Program Files (x86)\DAUM\PotPlayer\PotPlayer.exe",
-        "E:\PotPlayer\PotPlayerMini64.exe",
-        "E:\MediaServer\apps\PotPlayer\PotPlayerMini64.exe"
-    )
-
-    $potPlayerExe = $null
-    if (-not [string]::IsNullOrWhiteSpace($PotPlayerExe) -and (Test-Path -LiteralPath $PotPlayerExe)) {
-        $potPlayerExe = $PotPlayerExe
-    } else {
-        foreach ($path in $potentialPaths) {
-            if (Test-Path -Path $path) {
-                $potPlayerExe = $path
-                break
-            }
-        }
+    if (-not (Test-Path -LiteralPath $LauncherScript -PathType Leaf)) {
+        throw "Launcher script not found: $LauncherScript (pass -LauncherScript with the correct path)."
     }
+    Write-Host "[+] Preflight: launcher script exists ($LauncherScript)" -ForegroundColor Green
 
-    if (-not $potPlayerExe) {
-        # Check registry App Paths
-        $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\PotPlayerMini64.exe"
-        if (Test-Path $regPath) {
-            $potPlayerExe = (Get-ItemProperty -Path $regPath).'(default)'
-        }
-    }
-
-    if (-not $potPlayerExe -or -not (Test-Path $potPlayerExe)) {
-        Write-Host "[!] Could not automatically detect PotPlayer executable." -ForegroundColor Yellow
-        $potPlayerExe = Read-Host "Please enter the full path to PotPlayerMini64.exe (e.g. C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe)"
-        if (-not (Test-Path $potPlayerExe)) {
-            throw "Provided path does not exist: $potPlayerExe"
-        }
-    }
-
-    Write-Host "[+] Found PotPlayer executable at: $potPlayerExe" -ForegroundColor Green
+    # Setup robust launcher
+    $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $LauncherScript + '" "%1"'
 
     # F6: registry backup (.reg export) before any write.
     [void](Backup-RegistryKey -RegPath 'HKCR\potplayer')
-    [void](Backup-RegistryKey -RegPath 'HKCR\potplayer64')
 
-    # 2. Define Protocols to Register
-    $protocols = @("potplayer", "potplayer64")
+    # F1: idempotency — skip writes when the handler already matches.
+    $current = (Get-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\potplayer\shell\open\command' -Name '(Default)' -ErrorAction SilentlyContinue).'(Default)'
+    if ($current -ceq $cmd) {
+        Write-Host "[=] Registry handler already up to date; nothing to change." -ForegroundColor Gray
+    } else {
+        New-Item -Path 'Registry::HKEY_CLASSES_ROOT\potplayer' -Force | Out-Null
+        Set-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\potplayer' -Name '(Default)' -Value 'URL:PotPlayer Protocol'
+        Set-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\potplayer' -Name 'URL Protocol' -Value ''
 
-    foreach ($proto in $protocols) {
-        $rootKey = "HKCR:\$proto"
-        # F1: idempotency — compare current value before writing.
-        $desired = "`"$potPlayerExe`" `"%1`""
-        $current = (Get-ItemProperty -Path "$rootKey\shell\open\command" -Name '(default)' -ErrorAction SilentlyContinue).'(default)'
-        if ($current -ceq $desired) {
-            Write-Host "[=] Protocol '${proto}://' already up to date; leaving in place." -ForegroundColor Gray
-            continue
-        }
-        Write-Host "[*] Registering '${proto}://' protocol handler..." -ForegroundColor Cyan
-
-        # Create / Overwrite root protocol key
-        if (-not (Test-Path $rootKey)) {
-            New-Item -Path $rootKey -Force | Out-Null
-        }
-        Set-ItemProperty -Path $rootKey -Name "(Default)" -Value "URL:PotPlayer Protocol" -Force
-        Set-ItemProperty -Path $rootKey -Name "URL Protocol" -Value "" -Force
-
-        # DefaultIcon
-        $iconKey = "$rootKey\DefaultIcon"
-        if (-not (Test-Path $iconKey)) {
-            New-Item -Path $iconKey -Force | Out-Null
-        }
-        Set-ItemProperty -Path $iconKey -Name "(Default)" -Value "`"$potPlayerExe`",0" -Force
-
-        # shell\open\command
-        $cmdKey = "$rootKey\shell\open\command"
-        if (-not (Test-Path $cmdKey)) {
-            New-Item -Path $cmdKey -Force | Out-Null
-        }
-        # Windows command line syntax to pass %1 as parameter
-        $commandValue = "`"$potPlayerExe`" `"%1`""
-        Set-ItemProperty -Path $cmdKey -Name "(Default)" -Value $commandValue -Force
-
-        Write-Host "[+] Successfully registered protocol '${proto}://'" -ForegroundColor Green
+        New-Item -Path 'Registry::HKEY_CLASSES_ROOT\potplayer\shell\open\command' -Force | Out-Null
+        Set-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\potplayer\shell\open\command' -Name '(Default)' -Value $cmd
+        Write-Host "Registry updated to use wrapper script." -ForegroundColor Green
     }
 
-    # F3: verification — read every protocol command back (no scheduled task is
-    # created by this installer, so Confirm-ScheduledTaskExists stays available
-    # for orchestrated/task scenarios only).
-    Write-Host ""
-    Write-Host "[+] Verification:" -ForegroundColor Cyan
-    foreach ($proto in $protocols) {
-        $cmd = (Get-ItemProperty -Path "HKCR:\$proto\shell\open\command" -ErrorAction Stop).'(default)'
-        if ([string]::IsNullOrWhiteSpace($cmd)) { throw "Verification failed: '$proto' command value is empty." }
-        Write-Host "    $proto -> $cmd" -ForegroundColor White
-    }
+    # F3: verification — read the handler value back.
+    $verified = (Get-ItemProperty -Path 'Registry::HKEY_CLASSES_ROOT\potplayer\shell\open\command' -ErrorAction Stop).'(Default)'
+    if ($verified -cne $cmd) { throw 'Verification failed: handler value does not match the expected command.' }
+    Write-Host "[verify] potplayer handler = $verified" -ForegroundColor Green
 
     # F8: version stamp after successful install.
-    [void](Write-VersionStamp -Name $ScriptName -Version $ScriptVersion -Extra @{ exe = $potPlayerExe })
-
-    Write-Host ""
-    Write-Host "[SUCCESS] Protocol registration completed successfully." -ForegroundColor Green
+    [void](Write-VersionStamp -Name $ScriptName -Version $ScriptVersion -Extra @{ launcher = $LauncherScript })
 } catch {
-    Write-Host ("[ERROR] Protocol registration failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    Write-Host ("[ERROR] Registry update failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
     # F4: rollback on failure (restore *.bak files + re-import .reg backups).
     Restore-Backups
     Restore-RegistryBackups
