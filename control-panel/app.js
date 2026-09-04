@@ -6,6 +6,16 @@ const TICK_MS = 1000;
 const STATUS_TIMEOUT_MS = 20000;
 const ACTION_TIMEOUT_MS = 300000;
 const LOG_RE = /^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\]\s*([\s\S]*)$/;
+// F3: Timeline render cap — virtualize: never render more than this many DOM nodes.
+const TIMELINE_RENDER_CAP = 300;
+// F4: Fetch retry with exponential backoff.
+const FETCH_MAX_RETRIES = 3;
+const FETCH_BACKOFF_BASE_MS = 500;
+const FETCH_BACKOFF_MAX_MS = 4000;
+// F6: Service badges primary source with fallback to /api/status.
+const HEALTH_URL = "/api/health";
+const METRICS_URL = "/api/metrics";
+const STATUS_URL = "/api/status";
 
 const SERVICE_ICONS = {
   jellyfin:
@@ -54,6 +64,17 @@ const state = {
   fetching: false,
   lastCheckedAt: null,
   unreachable: false,
+  // F1: tab visibility — pauses auto-refresh while hidden.
+  tabVisible: typeof document === "undefined" ? true : !document.hidden,
+  pollTimer: null,
+  // F4: retry/backoff bookkeeping + status pill state.
+  retryAttempt: 0,
+  backoffMs: 0,
+  fetchStatus: "idle",
+  // F5: last-play card dedupe key (refresh without full reload).
+  playbackKey: null,
+  // F10: track browser offline state to toast only on transitions.
+  wasOffline: typeof navigator !== "undefined" ? navigator.onLine === false : false,
 };
 
 const els = {
@@ -69,6 +90,7 @@ const els = {
   lastChecked: document.getElementById("last-checked"),
   refresh: document.getElementById("refresh-button"),
   toast: document.getElementById("toast"),
+  statusPill: null,
 };
 
 const GLOBAL_BUTTON_DEFAULTS = new Map(
@@ -86,10 +108,72 @@ function escapeHtml(value) {
 
 function showToast(message, kind = "info") {
   const toast = els.toast;
+  if (!toast) return;
   toast.textContent = message;
   toast.className = `toast toast-${kind} show`;
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 5200);
+}
+
+// F4: status pill — tinyFetch-state indicator next to the stack chip.
+// States: live | fetching | retrying | offline | stale
+function ensureStatusPill() {
+  if (els.statusPill && document.contains(els.statusPill)) return els.statusPill;
+  let pill = document.getElementById("fetch-status-pill");
+  if (!pill) {
+    pill = document.createElement("span");
+    pill.id = "fetch-status-pill";
+    pill.className = "fetch-pill is-idle";
+    pill.setAttribute("role", "status");
+    pill.setAttribute("aria-live", "polite");
+    pill.title = "Fetch status";
+    const anchor = els.stackChip || els.lastChecked || els.refresh;
+    if (anchor && anchor.parentElement) {
+      anchor.parentElement.insertBefore(pill, anchor.nextSibling);
+    } else {
+      document.body.appendChild(pill);
+    }
+    if (!document.getElementById("fetch-pill-styles")) {
+      const style = document.createElement("style");
+      style.id = "fetch-pill-styles";
+      style.textContent = [
+        ".fetch-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--accent-ring, #334);color:var(--muted, #999);margin-left:8px;white-space:nowrap;}",
+        ".fetch-pill.is-live{color:#7dd88a;border-color:rgba(125,216,138,.4);}",
+        ".fetch-pill.is-fetching{color:#7aa8ff;border-color:rgba(122,168,255,.4);}",
+        ".fetch-pill.is-retry{color:#f0b35c;border-color:rgba(240,179,92,.45);}",
+        ".fetch-pill.is-error{color:#f06a6a;border-color:rgba(240,106,106,.45);}",
+      ].join("\n");
+      document.head.appendChild(style);
+    }
+  }
+  els.statusPill = pill;
+  return pill;
+}
+
+function setStatusPill(status, text) {
+  state.fetchStatus = status;
+  const pill = ensureStatusPill();
+  if (!pill) return;
+  const labels = {
+    idle: "Idle",
+    live: "Live",
+    fetching: "Fetching…",
+    retrying: text || "Retrying…",
+    offline: "Offline",
+    stale: "Stale",
+  };
+  pill.textContent = labels[status] || text || status;
+  pill.className = `fetch-pill is-${status === "retrying" ? "retry" : status === "live" ? "live" : status === "fetching" ? "fetching" : status === "offline" || status === "stale" ? "error" : "idle"}`;
+  pill.title = status === "retrying" ? `Fetch retry — ${pill.textContent}` : `Fetch status: ${pill.textContent}`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffDelayMs(attempt) {
+  const exp = FETCH_BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1);
+  return Math.min(exp, FETCH_BACKOFF_MAX_MS);
 }
 
 function relTime(ts, now = Date.now()) {
@@ -208,9 +292,33 @@ function playbackCard(playback) {
   const entries = Number(playback.entries || 0);
   const lastRun = playback.last_run ? new Date(playback.last_run.replace(" ", "T")).getTime() : NaN;
   const lastRunLabel = Number.isFinite(lastRun) ? relTime(lastRun) : "unknown";
+  // F7: relative timestamp with title=absolute for the playlist last-run.
+  const lastRunTitle = playback.last_run ? String(playback.last_run).replace("T", " ") : "";
   const sourceLabel = playback.source_label || "No source candidates";
   const sourceCount = [playback.local_candidates, playback.rclone_candidates, playback.jellyfin_candidates]
     .filter((count) => Number(count) > 0).length;
+  // F5: last-play snippet (bridge "Handling play request") — refreshed via
+  // refreshLastPlayCard() without a full panel reload. Guarded: absent when
+  // the backend omits last_play.
+  const lastPlay = playback.last_play || null;
+  let lastPlayHtml = "";
+  if (lastPlay && (lastPlay.target_basename || lastPlay.started_iso)) {
+    const startedIso = String(lastPlay.started_iso || "");
+    const startedMs = startedIso ? Date.parse(startedIso.replace(" ", "T")) : NaN;
+    const ageLabel = Number.isFinite(startedMs)
+      ? relTime(startedMs)
+      : typeof lastPlay.age_s === "number"
+        ? relTime(Date.now() - lastPlay.age_s * 1000)
+        : "unknown";
+    const absolute = startedIso ? startedIso.replace("T", " ") : "";
+    const base = String(lastPlay.target_basename || "Unknown title");
+    const short = lastPlay.item_id_short ? ` · ${lastPlay.item_id_short}` : "";
+    lastPlayHtml = `<div class="playback-lastplay" data-testid="last-play">Last play: <strong title="${escapeHtml(
+      base + short,
+    )}">${escapeHtml(base)}</strong> <time datetime="${escapeHtml(startedIso)}" title="${escapeHtml(
+      absolute,
+    )}">${escapeHtml(ageLabel)}</time></div>`;
+  }
   return `
     <article class="playback-card st-${stateKey}">
       <div class="playback-main">
@@ -219,6 +327,7 @@ function playbackCard(playback) {
           <span class="playback-kicker">Reliable playlist</span>
           <h3>${escapeHtml(context)}</h3>
           <p>${escapeHtml(playback.detail || "Playlist status unavailable")}</p>
+          ${lastPlayHtml}
         </div>
         ${badgeFor({ ...playback, detail: playback.detail || "Playlist status" })}
       </div>
@@ -241,7 +350,7 @@ function playbackCard(playback) {
       </div>
       <div class="playback-footer">
         <span class="playback-file" title="Validated playlist filename">${escapeHtml(playback.playlist_name || "Unknown playlist")}</span>
-        <time datetime="${escapeHtml(playback.last_run || "")}">Last run ${escapeHtml(lastRunLabel)}</time>
+        <time datetime="${escapeHtml(playback.last_run || "")}" title="${escapeHtml(lastRunTitle)}">Last run ${escapeHtml(lastRunLabel)}</time>
       </div>
     </article>`;
 }
@@ -332,10 +441,27 @@ function renderActivity(lines) {
   const key = lines.join("\n");
   if (key === state.activityKey) return;
   state.activityKey = key;
-  const items = lines.slice(-60).reverse().map((line) => parseLogLine(line));
+  // F3: cap rendered nodes (drop oldest beyond the cap).
+  const items = lines.slice(-TIMELINE_RENDER_CAP).reverse().map((line) => parseLogLine(line));
   els.activity.innerHTML = items.length
     ? items.map(activityItem).join("")
     : '<li class="act-empty">No panel actions recorded yet.</li>';
+  // F3: hard virtualize guard — trim any excess DOM nodes, oldest first.
+  trimActivityDom();
+}
+
+// F3: ensure the activity list never exceeds TIMELINE_RENDER_CAP nodes.
+function trimActivityDom() {
+  if (!els.activity) return;
+  const overflow = els.activity.children.length - TIMELINE_RENDER_CAP;
+  if (overflow > 0) {
+    // Newest-first list: oldest nodes are at the end, drop them.
+    for (let i = 0; i < overflow; i += 1) {
+      const last = els.activity.lastElementChild;
+      if (!last) break;
+      last.remove();
+    }
+  }
 }
 
 function ensureFilterStyles() {
@@ -353,6 +479,10 @@ function ensureFilterStyles() {
     ".act-level-warn .act-dot{border-color:var(--amber);box-shadow:0 0 0 3px rgba(240,179,92,0.12);}",
     ".act-level-error .act-dot{border-color:var(--red);box-shadow:0 0 0 3px rgba(240,106,106,0.12);}",
     ".act-src,.act-lvl{color:var(--faint);}",
+    // F8: click-to-copy affordance for log lines.
+    ".act-item{cursor:copy;}",
+    ".act-item:hover .act-msg{text-decoration:underline dotted;}",
+    ".act-item.is-copied{outline:1px solid var(--accent-ring);border-radius:6px;}",
   ].join("\n");
   document.head.appendChild(style);
 }
@@ -410,6 +540,23 @@ function ensureFilterUI() {
   els.filters = container;
   els.chips = container.querySelector("#activity-chips");
   els.errorsOnly = container.querySelector("#activity-errors-only");
+}
+
+// F2: errors-only client toggle — single entry point for checkbox UI + keyboard shortcut.
+function setErrorsOnly(next) {
+  state.errorsOnly = Boolean(next);
+  try {
+    localStorage.setItem(FILTER_STORAGE_ERRORS, state.errorsOnly ? "1" : "0");
+  } catch (_) {
+    /* storage unavailable */
+  }
+  ensureFilterUI();
+  if (els.errorsOnly && els.errorsOnly.checked !== state.errorsOnly) {
+    els.errorsOnly.checked = state.errorsOnly;
+  }
+  // Force re-render even when only the filter changed (bypass timelineKey fast-path).
+  state.filterKey = null;
+  if (state.lastPayload) renderTimeline(state.lastPayload);
 }
 
 function isErrorLevel(level) {
@@ -575,7 +722,9 @@ function renderTimeline(payload) {
   const visible = errorsFiltered.filter(
     (entry) => state.sourceFilter === "all" || entry.source === state.sourceFilter,
   );
-  const items = visible.slice(-60).reverse().map(timelineItem);
+  // F3: virtualize — cap DOM nodes at TIMELINE_RENDER_CAP, drop oldest beyond the window.
+  const windowed = visible.slice(-TIMELINE_RENDER_CAP);
+  const items = windowed.reverse().map(timelineItem);
   if (!items.length) {
     let emptyText = "No panel actions recorded yet.";
     if (state.sourceFilter !== "all") emptyText = `No ${state.sourceFilter} entries in the last window`;
@@ -584,6 +733,7 @@ function renderTimeline(payload) {
   } else {
     els.activity.innerHTML = items.join("");
   }
+  trimActivityDom();
   try {
     state.activityKey = `${Array.isArray(payload.activity) ? payload.activity.join("\n") : ""}|${dataKey}|${filterKey}`;
   } catch (_) {
@@ -609,6 +759,7 @@ function applyPendingState() {
 
 function render(payload) {
   state.lastPayload = payload;
+  state.playbackKey = playbackKeyOf(payload);
   const services = payload.services || {};
   const cards = SERVICE_ORDER.map((key) => services[key]).filter(Boolean);
   els.services.innerHTML = cards.length
@@ -653,22 +804,175 @@ async function fetchJson(url, options = null, timeoutMs = STATUS_TIMEOUT_MS) {
   }
 }
 
+// F4: fetch with exponential backoff + status pill updates.
+// Retries network/5xx/timeout failures; 4xx (except 429) fails fast.
+async function fetchJsonWithRetry(url, options = null, timeoutMs = STATUS_TIMEOUT_MS, maxRetries = FETCH_MAX_RETRIES) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      if (attempt > 0) {
+        const delay = backoffDelayMs(attempt);
+        state.backoffMs = delay;
+        state.retryAttempt = attempt;
+        setStatusPill("retrying", `Retrying… ${attempt}/${maxRetries}`);
+        await sleep(delay);
+      } else {
+        state.retryAttempt = 0;
+        setStatusPill("fetching");
+      }
+      const data = await fetchJson(url, options, timeoutMs);
+      state.retryAttempt = 0;
+      state.backoffMs = 0;
+      return data;
+    } catch (error) {
+      lastError = error;
+      const msg = String((error && error.message) || "");
+      const statusMatch = /HTTP\s+(\d{3})/.exec(msg);
+      const statusCode = statusMatch ? Number(statusMatch[1]) : 0;
+      const retryable =
+        statusCode === 0 || statusCode === 429 || statusCode >= 500 || /timed out|network|failed to fetch/i.test(msg);
+      if (!retryable || attempt >= maxRetries) break;
+    }
+  }
+  throw lastError || new Error("Request failed");
+}
+
 async function refreshStatus() {
   if (state.fetching) return;
+  // F1: never poll while the tab is hidden.
+  if (!state.tabVisible) return;
   state.fetching = true;
-  els.lastChecked.classList.add("is-fetching");
+  if (els.lastChecked) els.lastChecked.classList.add("is-fetching");
+  setStatusPill("fetching");
   try {
-    const payload = await fetchJson("/api/status");
+    const payload = await fetchJsonWithRetry(STATUS_URL);
     state.lastCheckedAt = new Date();
     state.unreachable = false;
+    setStatusPill("live", "Live");
     render(payload);
+    // F6: opportunistically enrich badges from /api/health (guarded, fallback to status).
+    refreshServiceBadges(true);
   } catch (error) {
     state.unreachable = true;
+    setStatusPill("stale", "Stale");
     updateStackChip(state.lastPayload ? state.lastPayload.services || {} : {});
-    els.lastCheckedText.textContent = "stale";
+    if (els.lastCheckedText) els.lastCheckedText.textContent = "stale";
   } finally {
     state.fetching = false;
-    els.lastChecked.classList.remove("is-fetching");
+    if (els.lastChecked) els.lastChecked.classList.remove("is-fetching");
+  }
+}
+
+// F6: Service badges rendered from /api/health with fallback.
+// Tries /api/health first; accepts several shapes; falls back to
+// state.lastPayload.services (/api/status) and finally to the current DOM.
+async function refreshServiceBadges(silent = false) {
+  let health = null;
+  try {
+    health = await fetchJson(HEALTH_URL, null, 8000);
+  } catch (_) {
+    health = null;
+  }
+  const fromHealth = normalizeHealthToServices(health);
+  if (fromHealth) {
+    applyServiceBadges(fromHealth);
+    return true;
+  }
+  if (!silent) {
+    // Fallback 1: last /api/status payload already in memory.
+    if (state.lastPayload && state.lastPayload.services) {
+      applyServiceBadges(state.lastPayload.services);
+      return true;
+    }
+  }
+  // Fallback 2: try /api/metrics (may carry per-service health hints).
+  try {
+    const metrics = await fetchJson(METRICS_URL, null, 8000);
+    const fromMetrics = normalizeMetricsToServices(metrics);
+    if (fromMetrics) {
+      applyServiceBadges(fromMetrics);
+      return true;
+    }
+  } catch (_) {
+    /* metrics absent — keep current badges */
+  }
+  if (state.lastPayload && state.lastPayload.services) {
+    applyServiceBadges(state.lastPayload.services);
+    return true;
+  }
+  return false;
+}
+
+function normalizeHealthToServices(health) {
+  if (!health || typeof health !== "object") return null;
+  // Shape A: { services: { jellyfin: {...}, ... } } (preferred).
+  if (health.services && typeof health.services === "object") return health.services;
+  // Shape B: { checks: [...] } or array of { id, state, ... }.
+  const list = Array.isArray(health) ? health : health.checks || health.items;
+  if (Array.isArray(list)) {
+    const out = {};
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const id = String(item.id || item.service || item.name || "").toLowerCase();
+      if (!id) continue;
+      out[id] = item;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  // Shape C: flat { status: "ok" } panel heartbeat — not per-service, use fallback.
+  return null;
+}
+
+function normalizeMetricsToServices(metrics) {
+  if (!metrics || typeof metrics !== "object") return null;
+  if (metrics.services && typeof metrics.services === "object") return metrics.services;
+  return null;
+}
+
+function applyServiceBadges(services) {
+  if (!services || !els.services) return;
+  for (const key of SERVICE_ORDER) {
+    const svc = services[key];
+    if (!svc) continue;
+    const card = els.services.querySelector(`[data-service-id="${CSS.escape(key)}"]`);
+    if (!card) continue;
+    const badge = card.querySelector(".badge");
+    if (badge) badge.outerHTML = badgeFor(svc);
+    const detail = card.querySelector(".svc-detail");
+    if (detail && typeof svc.detail === "string") detail.textContent = svc.detail;
+    const stateKey = ["healthy", "warning", "starting", "stopped"].includes(svc.state) ? svc.state : "stopped";
+    card.className = `service-card st-${stateKey}`;
+  }
+  updateStackChip({ ...(state.lastPayload ? state.lastPayload.services || {} : {}), ...services });
+}
+
+// F5: Last-play card refresh without full reload.
+// Fetches status once and patches ONLY #playback-status when the playback
+// payload actually changed (playbackKey dedupe). Never touches services/timeline.
+async function refreshLastPlayCard() {
+  if (!els.playback || state.fetching) return false;
+  let payload = null;
+  try {
+    payload = await fetchJsonWithRetry(STATUS_URL, null, STATUS_TIMEOUT_MS, 1);
+  } catch (_) {
+    return false;
+  }
+  const playback = payload && payload.playback ? payload.playback : null;
+  const key = JSON.stringify(playback || null);
+  if (key === state.playbackKey) return true;
+  state.playbackKey = key;
+  els.playback.innerHTML = playbackCard(playback);
+  if (payload && payload.services) {
+    state.lastPayload = { ...(state.lastPayload || {}), ...payload, services: payload.services };
+  }
+  return true;
+}
+
+function playbackKeyOf(payload) {
+  try {
+    return JSON.stringify((payload && payload.playback) || null);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -706,6 +1010,122 @@ async function runAction(service, action) {
   }
 }
 
+// F8: click a log line to copy its text (msg + absolute timestamp).
+async function copyTextToClipboard(text) {
+  const value = String(text || "");
+  if (!value) return false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch (_) {
+    /* fall through to legacy path */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+function logLineText(item) {
+  if (!item) return "";
+  const msg = item.querySelector(".act-msg");
+  const time = item.querySelector("time");
+  const body = msg ? msg.textContent.trim() : item.textContent.trim();
+  const stamp = time ? (time.getAttribute("title") || time.getAttribute("datetime") || "").trim() : "";
+  return stamp ? `${body} [${stamp}]` : body;
+}
+
+async function handleActivityCopy(event) {
+  const item = event.target.closest ? event.target.closest(".act-item") : null;
+  if (!item || !els.activity || !els.activity.contains(item)) return;
+  // Don't hijack filter-chip or link clicks inside the timeline.
+  if (event.target.closest("button, a")) return;
+  const text = logLineText(item);
+  if (!text) return;
+  const ok = await copyTextToClipboard(text);
+  showToast(ok ? "Log line copied" : "Copy failed", ok ? "success" : "error");
+  if (ok) {
+    item.classList.add("is-copied");
+    setTimeout(() => item.classList.remove("is-copied"), 900);
+  }
+}
+
+// F1: managed auto-refresh — pause when hidden, resume when visible.
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(() => {
+    if (!state.tabVisible || state.pending || state.fetching) return;
+    refreshStatus();
+  }, POLL_MS);
+}
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function handleVisibilityChange() {
+  state.tabVisible = !document.hidden;
+  if (document.hidden) {
+    // F1: pause — stop the timer so no fetch fires while hidden.
+    stopPolling();
+  } else {
+    // F1: resume — restart the timer and refresh immediately.
+    startPolling();
+    if (!state.pending) refreshStatus();
+  }
+}
+
+// F9: keyboard shortcuts — e = errors-only toggle, r = refresh.
+// Ignores keystrokes inside inputs/textareas/selects and contentEditable.
+function handleKeyboardShortcut(event) {
+  if (!event || event.defaultPrevented) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const target = event.target;
+  if (target) {
+    const tag = String(target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || target.isContentEditable) return;
+  }
+  const key = String(event.key || "").toLowerCase();
+  if (key === "e") {
+    ensureFilterUI();
+    setErrorsOnly(!state.errorsOnly);
+    showToast(state.errorsOnly ? "Errors-only filter on" : "Errors-only filter off", "info");
+  } else if (key === "r") {
+    if (!state.pending) refreshStatus();
+  }
+}
+
+// F10: connection-status toast on offline/online transitions.
+function handleOffline() {
+  state.wasOffline = true;
+  setStatusPill("offline", "Offline");
+  showToast("Connection lost — panel offline", "error");
+}
+
+function handleOnline() {
+  if (state.wasOffline) {
+    showToast("Connection restored", "success");
+  }
+  state.wasOffline = false;
+  setStatusPill("fetching");
+  refreshStatus();
+}
+
 document.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-action]");
   if (button && !button.disabled) {
@@ -713,9 +1133,16 @@ document.addEventListener("click", (event) => {
   }
 });
 
-els.refresh.addEventListener("click", () => {
-  if (!state.pending) refreshStatus();
-});
+// F8: delegate copy handler on the activity list.
+if (els.activity) {
+  els.activity.addEventListener("click", handleActivityCopy);
+}
+
+if (els.refresh) {
+  els.refresh.addEventListener("click", () => {
+    if (!state.pending) refreshStatus();
+  });
+}
 
 function showSkeletons() {
   els.services.innerHTML = skeletonCards();
@@ -723,13 +1150,18 @@ function showSkeletons() {
   els.activity.innerHTML = '<li class="act-empty">Loading activity…</li>';
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && !state.pending) refreshStatus();
-});
+// F1: pause auto-refresh when tab hidden, resume on visible.
+document.addEventListener("visibilitychange", handleVisibilityChange);
+// F9: e = errors toggle, r = refresh.
+document.addEventListener("keydown", handleKeyboardShortcut);
+// F10: offline/online connection toasts.
+window.addEventListener("offline", handleOffline);
+window.addEventListener("online", handleOnline);
 
 showSkeletons();
+ensureStatusPill();
+setStatusPill("fetching");
 refreshStatus();
-setInterval(() => {
-  if (!document.hidden && !state.pending) refreshStatus();
-}, POLL_MS);
+startPolling();
+// F7: relative timestamps tick every second (title holds the absolute time).
 setInterval(updateRelativeTimes, TICK_MS);

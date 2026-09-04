@@ -8,20 +8,23 @@ lines, credentials, or filesystem contents through its API.
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -40,7 +43,22 @@ PANEL_PORT = 18080
 _TAIL_BYTES = 64 * 1024
 # Cache TTLs (seconds).
 _PROCESS_TTL_SECONDS = 10.0
-_METRICS_TTL_SECONDS = 30.0
+# Feature (2): /api/metrics proxies torbox-proxy /metrics with a short 5s cache
+# so the panel stays responsive without hammering :8888 on every poll.
+_METRICS_TTL_SECONDS = 5.0
+# Feature (3/4): timeline pagination + errors-only filter defaults.
+_TIMELINE_PAGE_DEFAULT = 1
+_TIMELINE_PER_PAGE_DEFAULT = 20
+_TIMELINE_PER_PAGE_MAX = 100
+# Feature (5): per-service restart allowlist (hardcoded; never accept arbitrary names).
+RESTART_ALLOWLIST = frozenset({"jellyfin", "proxy", "bridge", "gdrive", "torboxmount"})
+# Feature (9): rate limit for admin/restart endpoints (sliding window per client IP).
+_ADMIN_RATE_LIMIT_MAX = 30
+_ADMIN_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_ADMIN_RATE_BUCKETS: dict[str, list[float]] = {}
+_ADMIN_RATE_LOCK = threading.Lock()
+# Feature (7): read-only config surface (no secrets, ever).
+PANEL_VERSION = "1.0.0"
 # Activity quotas: panel[-50] + sync[-30], merged, sorted, sliced.
 _ACTIVITY_PANEL_QUOTA = 50
 _ACTIVITY_SYNC_QUOTA = 30
@@ -1703,15 +1721,288 @@ def _is_light_request(path: str) -> bool:
     return False
 
 
-def json_response(handler: BaseHTTPRequestHandler, data: dict[str, Any], status: int = 200) -> None:
+def _new_request_id() -> str:
+    """Feature (6): unique id for every request (header + log line)."""
+    return uuid.uuid4().hex
+
+
+def _client_ip(handler: BaseHTTPRequestHandler) -> str:
+    try:
+        return str(handler.client_address[0]) if handler.client_address else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _log_request(request_id: str, method: str, path: str, status: int) -> None:
+    """Feature (6): one log line per request carrying the request id."""
+    try:
+        append_log(f"[{request_id}] {method} {path} -> {status}")
+    except Exception:
+        pass
+
+
+def _client_accepts_gzip(handler: BaseHTTPRequestHandler) -> bool:
+    """Feature (8): honour Accept-Encoding: gzip when the client offers it."""
+    try:
+        encoding = handler.headers.get("Accept-Encoding") or ""
+        return "gzip" in encoding.lower()
+    except Exception:
+        return False
+
+
+def _maybe_gzip(handler: BaseHTTPRequestHandler, raw: bytes) -> tuple[bytes, bool]:
+    """Compress payload when the client accepts gzip; never fail the request."""
+    if not raw or len(raw) < 256:
+        return raw, False
+    if not _client_accepts_gzip(handler):
+        return raw, False
+    try:
+        return gzip.compress(raw), True
+    except Exception:
+        return raw, False
+
+
+def _parse_query(raw_path: str) -> dict[str, list[str]]:
+    """Parse query string into {key: [values]} with lower-cased keys."""
+    try:
+        query = raw_path.split("?", 1)[1] if "?" in raw_path else ""
+        parsed = parse_qs(query, keep_blank_values=True)
+        return {str(k).lower(): [str(v) for v in vals] for k, vals in parsed.items()}
+    except Exception:
+        return {}
+
+
+def _parse_pagination(query: dict[str, list[str]]) -> tuple[int, int]:
+    """Feature (3): ?page=&per_page= with sane clamping."""
+    try:
+        page_raw = (query.get("page") or [""])[0]
+        per_page_raw = (query.get("per_page") or [""])[0]
+        page = int(str(page_raw).strip()) if str(page_raw).strip() else _TIMELINE_PAGE_DEFAULT
+    except (TypeError, ValueError):
+        page = _TIMELINE_PAGE_DEFAULT
+    try:
+        per_page = int(str(per_page_raw).strip()) if str(per_page_raw).strip() else _TIMELINE_PER_PAGE_DEFAULT
+    except (TypeError, ValueError):
+        per_page = _TIMELINE_PER_PAGE_DEFAULT
+    if page < 1:
+        page = 1
+    if per_page < 1:
+        per_page = _TIMELINE_PER_PAGE_DEFAULT
+    if per_page > _TIMELINE_PER_PAGE_MAX:
+        per_page = _TIMELINE_PER_PAGE_MAX
+    return page, per_page
+
+
+def _parse_level_filter(query: dict[str, list[str]]) -> str | None:
+    """Feature (4): ?level=error returns errors only (case-insensitive)."""
+    try:
+        vals = query.get("level")
+        if not vals:
+            return None
+        level = str(vals[0] or "").strip().lower()
+        return level or None
+    except Exception:
+        return None
+
+
+def _check_admin_rate_limit(handler: BaseHTTPRequestHandler) -> tuple[bool, int]:
+    """Feature (9): sliding-window rate limit for admin/restart endpoints.
+
+    Returns (allowed, retry_after_seconds). Per client IP, max
+    _ADMIN_RATE_LIMIT_MAX requests per _ADMIN_RATE_LIMIT_WINDOW_SECONDS.
+    """
+    ip = _client_ip(handler)
+    now = time.monotonic()
+    window = _ADMIN_RATE_LIMIT_WINDOW_SECONDS
+    with _ADMIN_RATE_LOCK:
+        hits = _ADMIN_RATE_BUCKETS.get(ip, [])
+        hits = [t for t in hits if (now - t) < window]
+        if len(hits) >= _ADMIN_RATE_LIMIT_MAX:
+            oldest = min(hits) if hits else now
+            retry_after = max(1, int(window - (now - oldest)) + 1)
+            _ADMIN_RATE_BUCKETS[ip] = hits
+            return False, retry_after
+        hits.append(now)
+        _ADMIN_RATE_BUCKETS[ip] = hits
+        return True, 0
+
+
+def health_payload() -> dict[str, Any]:
+    """Feature (1): GET /api/health aggregating proxy/bridge/Jellyfin/mount T:.
+
+    Lightweight: one short HTTP probe per TCP service + os.path.isdir for
+    the T:\\ mount. Never raises; degrades to stopped/unknown on failure.
+    """
+    services: dict[str, dict[str, Any]] = {}
+    try:
+        proxy_probe = http_probe("http://127.0.0.1:8888/health", timeout=2.0)
+    except Exception:
+        proxy_probe = {"ok": False, "code": 0, "body": ""}
+    services["proxy"] = {
+        "id": "proxy",
+        "name": "TorBox Proxy",
+        "port": 8888,
+        "ok": bool(proxy_probe.get("ok")),
+        "code": int(proxy_probe.get("code") or 0),
+        "state": "healthy" if proxy_probe.get("ok") else "stopped",
+    }
+    try:
+        bridge_probe = http_probe("http://127.0.0.1:18099/health", timeout=2.0)
+    except Exception:
+        bridge_probe = {"ok": False, "code": 0, "body": ""}
+    services["bridge"] = {
+        "id": "bridge",
+        "name": "PotPlayer Bridge",
+        "port": 18099,
+        "ok": bool(bridge_probe.get("ok")),
+        "code": int(bridge_probe.get("code") or 0),
+        "state": "healthy" if bridge_probe.get("ok") else "stopped",
+    }
+    try:
+        jelly_probe = http_probe("http://127.0.0.1:8096/System/Info/Public", timeout=2.0)
+    except Exception:
+        jelly_probe = {"ok": False, "code": 0, "body": ""}
+    jelly_entry: dict[str, Any] = {
+        "id": "jellyfin",
+        "name": "Jellyfin",
+        "port": 8096,
+        "ok": bool(jelly_probe.get("ok")),
+        "code": int(jelly_probe.get("code") or 0),
+        "state": "healthy" if jelly_probe.get("ok") else "stopped",
+    }
+    if jelly_probe.get("ok"):
+        try:
+            info = json.loads(str(jelly_probe.get("body") or ""))
+            if isinstance(info, dict):
+                if info.get("Version"):
+                    jelly_entry["version"] = info.get("Version")
+                if info.get("ServerName"):
+                    jelly_entry["server_name"] = info.get("ServerName")
+        except Exception:
+            pass
+    services["jellyfin"] = jelly_entry
+    try:
+        mount_ok = os.path.isdir("T:\\")
+    except Exception:
+        mount_ok = False
+    services["torboxmount"] = {
+        "id": "torboxmount",
+        "name": "TorBox Mount",
+        "port": None,
+        "mount_path": "T:\\",
+        "ok": bool(mount_ok),
+        "state": "healthy" if mount_ok else "stopped",
+        "detail": "T:\\ is mounted" if mount_ok else "T:\\ is not mounted",
+    }
+    overall = "healthy" if all(str(v.get("state")) == "healthy" for v in services.values()) else "degraded"
+    return {
+        "status": "ok" if overall == "healthy" else "degraded",
+        "overall": overall,
+        "services": services,
+        "time": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def config_payload() -> dict[str, Any]:
+    """Feature (7): read-only GET /api/config (ports, paths, versions).
+
+    Never includes secrets: no tokens, API keys, passwords, or command lines.
+    Only static ports, safe mount paths, and version strings.
+    """
+    try:
+        python_version = sys.version.split()[0]
+    except Exception:
+        python_version = "unknown"
+    return {
+        "ports": {
+            "panel": PANEL_PORT,
+            "jellyfin": 8096,
+            "proxy": 8888,
+            "bridge": 18099,
+        },
+        "paths": {
+            "mount_t": "T:\\",
+            "mount_gdrive": r"F:\Media",
+            "mount_gdrive_alias": "R:\\",
+        },
+        "versions": {
+            "panel": PANEL_VERSION,
+            "python": python_version,
+        },
+    }
+
+
+def preflight_check(port: int = PANEL_PORT) -> None:
+    """Feature (10): startup preflight with a clear error on port conflict.
+
+    Tries to bind 127.0.0.1:port briefly. On EADDRINUSE raises SystemExit(1)
+    with a human-readable message (also appended to the panel log).
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        probe.bind(("127.0.0.1", port))
+    except OSError as exc:
+        message = (
+            f"Control panel preflight failed: port {port} is already in use "
+            f"({exc.strerror or exc}); is another control-panel instance running? "
+            f"Stop the existing process on 127.0.0.1:{port} and retry."
+        )
+        try:
+            append_log(message)
+        except Exception:
+            pass
+        print(message, file=sys.stderr)
+        raise SystemExit(1) from exc
+    finally:
+        try:
+            probe.close()
+        except Exception:
+            pass
+
+
+def json_response(
+    handler: BaseHTTPRequestHandler,
+    data: dict[str, Any],
+    status: int = 200,
+    request_id: str | None = None,
+) -> None:
     raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    body, did_gzip = _maybe_gzip(handler, raw)
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Content-Length", str(len(raw)))
+    handler.send_header("Content-Length", str(len(body)))
+    if did_gzip:
+        handler.send_header("Content-Encoding", "gzip")
+        handler.send_header("Vary", "Accept-Encoding")
+    if request_id:
+        handler.send_header("X-Request-ID", request_id)
     _send_security_headers(handler)
     handler.end_headers()
-    handler.wfile.write(raw)
+    handler.wfile.write(body)
+
+
+def _serve_static(
+    handler: BaseHTTPRequestHandler,
+    raw: bytes,
+    content_type: str,
+    request_id: str | None = None,
+    status: int = 200,
+) -> None:
+    body, did_gzip = _maybe_gzip(handler, raw)
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", str(len(body)))
+    if did_gzip:
+        handler.send_header("Content-Encoding", "gzip")
+        handler.send_header("Vary", "Accept-Encoding")
+    if request_id:
+        handler.send_header("X-Request-ID", request_id)
+    _send_security_headers(handler)
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 class ControlPanelHandler(BaseHTTPRequestHandler):
@@ -1719,76 +2010,207 @@ class ControlPanelHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        request_id = _new_request_id()
         raw_path = self.path
         path = raw_path.split("?", 1)[0]
-        if path == "/health":
-            json_response(self, {"status": "ok", "service": "jellyfin-control-panel"})
-            return
-        if path == "/api/status":
-            light = _is_light_request(raw_path)
-            json_response(self, status_payload(light=light))
-            return
-        if path == "/api/activity":
-            json_response(self, {"activity": read_activity(), "timeline": read_timeline()})
-            return
-        if path == "/api/metrics":
-            light = _is_light_request(raw_path)
-            json_response(self, get_metrics(include_gdrive=not light))
-            return
-        if path == "/api/timeline":
-            light = _is_light_request(raw_path)
-            json_response(self, {"timeline": read_timeline(include_gdrive=not light)})
-            return
-
-        files = {
-            "/": ("index.html", "text/html; charset=utf-8"),
-            "/index.html": ("index.html", "text/html; charset=utf-8"),
-            "/app.css": ("app.css", "text/css; charset=utf-8"),
-            "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-        }
-        entry = files.get(path)
-        if not entry:
-            json_response(self, {"error": "Not found"}, 404)
-            return
-        file_path = CONTROL_DIR / entry[0]
+        query = _parse_query(raw_path)
         try:
-            raw = file_path.read_bytes()
-        except OSError:
-            json_response(self, {"error": "Panel asset missing"}, 500)
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", entry[1])
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(raw)))
-        _send_security_headers(self)
-        self.end_headers()
-        self.wfile.write(raw)
+            if path == "/health":
+                json_response(self, {"status": "ok", "service": "jellyfin-control-panel"}, 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/health":
+                # Feature (1): aggregated health for proxy/bridge/Jellyfin/mount T:.
+                payload = health_payload()
+                json_response(self, payload, 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/status":
+                light = _is_light_request(raw_path)
+                json_response(self, status_payload(light=light), 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/activity":
+                json_response(self, {"activity": read_activity(), "timeline": read_timeline()}, 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/metrics":
+                # Feature (2): proxies torbox-proxy /metrics via get_metrics() (5s cache).
+                light = _is_light_request(raw_path)
+                json_response(self, get_metrics(include_gdrive=not light), 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/timeline":
+                # Features (3/4): pagination (?page=&per_page=) + errors-only (?level=error).
+                light = _is_light_request(raw_path)
+                full = read_timeline(include_gdrive=not light)
+                level = _parse_level_filter(query)
+                if level == "error":
+                    full = [e for e in full if str(e.get("level") or "").lower() == "error"]
+                page, per_page = _parse_pagination(query)
+                total = len(full)
+                total_pages = max(1, (total + per_page - 1) // per_page) if total else 1
+                if page > total_pages:
+                    page = total_pages
+                start = (page - 1) * per_page
+                sliced = full[start:start + per_page]
+                json_response(
+                    self,
+                    {
+                        "timeline": sliced,
+                        "page": page,
+                        "per_page": per_page,
+                        "total": total,
+                        "total_pages": total_pages,
+                        "level": level,
+                    },
+                    200,
+                    request_id,
+                )
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+            if path == "/api/config":
+                # Feature (7): read-only config (ports, paths, versions; no secrets).
+                json_response(self, config_payload(), 200, request_id)
+                _log_request(request_id, "GET", raw_path, 200)
+                return
+
+            files = {
+                "/": ("index.html", "text/html; charset=utf-8"),
+                "/index.html": ("index.html", "text/html; charset=utf-8"),
+                "/app.css": ("app.css", "text/css; charset=utf-8"),
+                "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+            }
+            entry = files.get(path)
+            if not entry:
+                json_response(self, {"error": "Not found"}, 404, request_id)
+                _log_request(request_id, "GET", raw_path, 404)
+                return
+            file_path = CONTROL_DIR / entry[0]
+            try:
+                raw = file_path.read_bytes()
+            except OSError:
+                json_response(self, {"error": "Panel asset missing"}, 500, request_id)
+                _log_request(request_id, "GET", raw_path, 500)
+                return
+            _serve_static(self, raw, entry[1], request_id, 200)
+            _log_request(request_id, "GET", raw_path, 200)
+        except Exception as exc:
+            try:
+                json_response(self, {"error": str(exc) or "Internal error"}, 500, request_id)
+            except Exception:
+                pass
+            _log_request(request_id, "GET", raw_path, 500)
 
     def do_POST(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if path != "/api/action":
-            json_response(self, {"ok": False, "error": "Not found"}, 404)
+        request_id = _new_request_id()
+        raw_path = self.path
+        path = raw_path.split("?", 1)[0]
+        if path == "/api/config":
+            # Feature (7): config is read-only.
+            json_response(self, {"ok": False, "error": "Read-only: use GET /api/config"}, 405, request_id)
+            _log_request(request_id, "POST", raw_path, 405)
+            return
+        if path not in ("/api/action", "/api/restart"):
+            json_response(self, {"ok": False, "error": "Not found"}, 404, request_id)
+            _log_request(request_id, "POST", raw_path, 404)
+            return
+        # Feature (9): rate limit admin/restart endpoints.
+        allowed, retry_after = _check_admin_rate_limit(self)
+        if not allowed:
+            try:
+                raw = json.dumps({"ok": False, "error": "Rate limit exceeded; retry later"}).encode("utf-8")
+                body, did_gzip = _maybe_gzip(self, raw)
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Retry-After", str(retry_after))
+                if did_gzip:
+                    self.send_header("Content-Encoding", "gzip")
+                    self.send_header("Vary", "Accept-Encoding")
+                if request_id:
+                    self.send_header("X-Request-ID", request_id)
+                _send_security_headers(self)
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception:
+                pass
+            _log_request(request_id, "POST", raw_path, 429)
+            try:
+                append_log(f"[{request_id}] rate-limited POST {raw_path} from {_client_ip(self)}")
+            except Exception:
+                pass
             return
         if not _is_origin_allowed(self):
-            json_response(self, {"ok": False, "error": "Cross-origin request rejected"}, 403)
+            json_response(self, {"ok": False, "error": "Cross-origin request rejected"}, 403, request_id)
+            _log_request(request_id, "POST", raw_path, 403)
             return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            raw_body = self.rfile.read(max(0, length)).decode("utf-8") if length > 0 else "{}"
+            try:
+                payload = json.loads(raw_body) if raw_body.strip() else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if path == "/api/restart":
+                # Feature (5): per-service restart with hardcoded allowlist.
+                service = str(payload.get("service", "") or "").strip()
+                if not service:
+                    json_response(self, {"ok": False, "error": "Missing 'service'"}, 400, request_id)
+                    _log_request(request_id, "POST", raw_path, 400)
+                    return
+                if service not in RESTART_ALLOWLIST:
+                    json_response(
+                        self,
+                        {
+                            "ok": False,
+                            "error": f"Unknown or not restartable service: {service}",
+                            "allowed": sorted(RESTART_ALLOWLIST),
+                        },
+                        400,
+                        request_id,
+                    )
+                    _log_request(request_id, "POST", raw_path, 400)
+                    return
+                message = dispatch_action(service, "restart")
+                json_response(self, {"ok": True, "message": message, "status": status_payload()}, 200, request_id)
+                _log_request(request_id, "POST", raw_path, 200)
+                return
+            # Legacy /api/action path (start/stop/restart/sync).
             action = str(payload.get("action", ""))
             service = str(payload.get("service", ""))
+            # Enforce the same hardcoded allowlist for restart via /api/action.
+            if action == "restart" and service not in RESTART_ALLOWLIST and service != "all":
+                json_response(
+                    self,
+                    {
+                        "ok": False,
+                        "error": f"Unknown or not restartable service: {service}",
+                        "allowed": sorted(RESTART_ALLOWLIST),
+                        "status": status_payload(),
+                    },
+                    400,
+                    request_id,
+                )
+                _log_request(request_id, "POST", raw_path, 400)
+                return
             message = dispatch_action(service, action)
-            json_response(self, {"ok": True, "message": message, "status": status_payload()})
+            json_response(self, {"ok": True, "message": message, "status": status_payload()}, 200, request_id)
+            _log_request(request_id, "POST", raw_path, 200)
         except ActionBusyError as exc:
-            append_log(f"Action conflict: {exc.service}/{exc.action} busy")
+            append_log(f"[{request_id}] Action conflict: {exc.service}/{exc.action} busy")
             json_response(
                 self,
                 {"ok": False, "error": str(exc), "service": exc.service, "action": exc.action, "status": status_payload()},
                 409,
+                request_id,
             )
+            _log_request(request_id, "POST", raw_path, 409)
         except Exception as exc:
-            append_log(f"Action failed: {type(exc).__name__}")
-            json_response(self, {"ok": False, "error": str(exc), "status": status_payload()}, 500)
+            append_log(f"[{request_id}] Action failed: {type(exc).__name__}")
+            json_response(self, {"ok": False, "error": str(exc), "status": status_payload()}, 500, request_id)
+            _log_request(request_id, "POST", raw_path, 500)
 
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -1800,12 +2222,23 @@ class ReusableThreadingHTTPServer(ThreadingHTTPServer):
 
 def main() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Feature (10): startup preflight — clear error on port conflict.
+    preflight_check(PANEL_PORT)
     append_log("Control panel process started in background")
     try:
         server = ReusableThreadingHTTPServer(("127.0.0.1", PANEL_PORT), ControlPanelHandler)
-    except OSError:
-        # A second logon trigger should not create a visible error or duplicate panel.
-        return
+    except OSError as exc:
+        message = (
+            f"Control panel failed to bind 127.0.0.1:{PANEL_PORT}: "
+            f"{exc.strerror or exc}. Another instance is likely running; "
+            f"stop it before starting a new one."
+        )
+        try:
+            append_log(message)
+        except Exception:
+            pass
+        print(message, file=sys.stderr)
+        raise SystemExit(1) from exc
     server.serve_forever()
 
 
