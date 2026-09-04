@@ -1,6 +1,7 @@
 ﻿param(
     [switch]$FullSeason,
     [switch]$Single,
+    [switch]$WhatIf,
     [Parameter(Position=0, ValueFromRemainingArguments=$true)]
     [string[]]$rawArgs
 )
@@ -18,18 +19,39 @@ try {
         $FullSeason = $true
     }
     if ($FullSeason) { $rawArgs = @($rawArgs | Where-Object { $_ -ne '-FullSeason' -and $_ -ne '/FullSeason' -and $_ -ne '--FullSeason' }) }
+    if ($WhatIf -or ($rawArgs -contains '-WhatIf')) {
+        $WhatIf = $true
+        $rawArgs = @($rawArgs | Where-Object { $_ -ne '-WhatIf' -and $_ -ne '/WhatIf' -and $_ -ne '--WhatIf' })
+    }
 } catch {}
 $script:FullSeasonMode = [bool]$FullSeason
 function Get-TorboxApiKey { if ($env:TORBOX_API_KEY) { return $env:TORBOX_API_KEY }; Write-Warning "TORBOX_API_KEY env var not set"; return "" }
 # Single health-probe cache: exactly one 127.0.0.1:8888/health probe per launch, reused everywhere.
 $script:ProxyHealthCached = $null
+$script:ProxyHealthTimestamp = [DateTime]::MinValue
 function Test-ProxyHealthCached {
-    if ($null -ne $script:ProxyHealthCached) { return [bool]$script:ProxyHealthCached }
+    param([switch]$Force)
+    if ((-not $Force) -and ($null -ne $script:ProxyHealthCached)) {
+        try {
+            if (([DateTime]::UtcNow - $script:ProxyHealthTimestamp.ToUniversalTime()).TotalSeconds -lt 60) {
+                return [bool]$script:ProxyHealthCached
+            }
+        } catch {}
+    }
     try {
         Invoke-RestMethod -Uri 'http://127.0.0.1:8888/health' -TimeoutSec 2 -ErrorAction Stop | Out-Null
         $script:ProxyHealthCached = $true
     } catch { $script:ProxyHealthCached = $false }
+    $script:ProxyHealthTimestamp = [DateTime]::UtcNow
     return [bool]$script:ProxyHealthCached
+}
+
+# Natural-sort key: pads digit runs so lexical compare equals numeric (E2 < E10).
+function Get-NaturalSortKey([string]$Name) {
+    if ([string]::IsNullOrEmpty($Name)) { return $Name }
+    try {
+        return [regex]::Replace($Name, '\d+', { param($m) $m.Value.PadLeft(10, '0') })
+    } catch { return $Name }
 }
 
 # Combine any split arguments if Windows passes unquoted spaces
@@ -42,6 +64,7 @@ try {
     if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
     $logLine = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RAW: $inputUri"
     Add-Content -Path (Join-Path $logDir 'potplayer-launcher.log') -Value $logLine -ErrorAction SilentlyContinue
+    $script:LaunchStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     # UX: Show realtime log window immediately after click (so Adolescence 15s wait has feedback, not just PotPlayer Opening...)
     try{
         $viewer = "F:\Jellyfin\show-playback-log.ps1"
@@ -1399,8 +1422,8 @@ function Start-SelectedPotPlayer {
                             $lines.Add('topindex=0')
                             $niceTitle = [System.IO.Path]::GetFileNameWithoutExtension($script:cdnNiceTitle)
                             $count = 1
-                            # Build from API/rclone ls
-                            $sorted = $lsOut | Sort-Object Name
+                             # Build from API/rclone ls (natural order so E2 < E10)
+                             $sorted = $lsOut | Sort-Object { Get-NaturalSortKey $_.Name }
                             $targetName = Split-Path $script:originalTPathForHttp -Leaf
                             $targetIdx = 0
                             for($i=0;$i -lt $sorted.Count;$i++){ if($sorted[$i].Name -eq $targetName){ $targetIdx = $i; break } }
@@ -1611,7 +1634,7 @@ function Start-SelectedPotPlayer {
                 $extensions = @('.mkv', '.mp4', '.avi', '.ts', '.m4v', '.mov', '.webm', '.flv', '.wmv', '.m2ts')
                 $allFiles = @(Get-ChildItem -LiteralPath $parentDir -File -ErrorAction SilentlyContinue |
                     Where-Object { $extensions -contains $_.Extension.ToLowerInvariant() } |
-                    Sort-Object Name)
+                    Sort-Object { Get-NaturalSortKey $_.Name })
                 # FIX: stale T:\ returns 0 via WinFsp but rclone torbox: has 23 (Desperate 13:31 C 0 vs rclone 23) — fallback to rclone lsjson so playlist not just 1
                 # UNIVERSAL: also handle variant picker where parent is T:\Dexter...NOGRP[rartv] but rclone folder is Dexter.S08...NOGRP[rartv] vs Dexter S08...Mesc — and ensure all episodes of that title/season are included, not just folder
                 if ($allFiles.Count -le 1 -and $Path -match '^[Tt]:\\') {
@@ -1736,5 +1759,19 @@ function Start-SelectedPotPlayer {
 # Always replace the current player session with the selected release folder.
 # Guarded: dot-sourcing for parser verification must not launch playback.
 if ($MyInvocation.InvocationName -ne '.') {
-    Start-SelectedPotPlayer -Path $mediaPath
+    try {
+        $tlMs = [int]$script:LaunchStopwatch.Elapsed.TotalMilliseconds
+        $tlMode = 'fullseason'
+        if (-not $script:FullSeasonMode) { $tlMode = 'single' }
+        $tlResume = 0
+        try { if ($script:resumeSec -gt 0) { $tlResume = [int]$script:resumeSec } } catch {}
+        Write-BridgeLog "TELEMETRY launch total_ms=$tlMs mode=$tlMode resume=${tlResume}s media=$mediaPath"
+    } catch {}
+    if ($WhatIf) {
+        Write-BridgeLog "WHATIF: would launch mediaPath=$mediaPath itemId=$itemId fullSeason=$($script:FullSeasonMode)"
+        Write-Output "WhatIf: mediaPath=$mediaPath"
+        Write-Output "WhatIf: itemId=$itemId fullSeason=$($script:FullSeasonMode)"
+    } else {
+        Start-SelectedPotPlayer -Path $mediaPath
+    }
 }
