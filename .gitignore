@@ -1,42 +1,29 @@
-# Git Ignore for Jellyfin Media Server Stack
+# Jellyfin binaries + runtime (reinstalled, never committed)
+server/*
+!server/torbox-proxy.py
+server/__pycache__/
 
-# Sensitive Configurations & Tokens
-*.conf
-!config/rclone.conf.template
-*.token
-*.key
-*.secret
-.env
-.env.local
-
-# Logs and Runtime State
+# Runtime / generated
 logs/
-*.log
-launcher_debug.log
-
-# Caches and Transcoding Buffers
 cache/
 transcodes/
 data/
-*.dpl
-season_playlist.dpl
-test_playlist.dpl
-
-# Backups & Temporary files
-task_backup.xml
-*.tmp
-*.bak
-
-# Playwright artifacts
+run/
+backups/
+config/
+*.log
+*.state.json
+*.bak-*
+__pycache__/
 .playwright-mcp/
-screenshots/
-jellyfin_live_dashboard.png
-jellyfin_season_dom_marked.png
-jellyfin_season_marked.png
-jellyfin_season_view.png
 
-# Binaries & Executables
-*.exe
-*.dll
-server/
-n*.zipn*.pycn
+# Local agent state
+.kilo/
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Doc screenshots (local only)
+control-panel-*.png
+
