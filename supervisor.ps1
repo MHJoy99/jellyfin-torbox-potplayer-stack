@@ -476,6 +476,20 @@ function Start-TorboxMount {
     return $false
   }
   Write-SupLog 'GATE torboxmount: T:\ missing; starting E:\MediaServer\mount-torbox.ps1.' 'WARN'
+  $rcloneT = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox'
+  if ($rcloneT.Count -gt 0) {
+    # A mount process is already alive but T:\ is not visible yet (slow WinFsp
+    # init or transient flap). Spawning a second mount on the same drive letter
+    # + RC port hard-kills the live instance — wait for it instead (2026-09-05).
+    Write-SupLog ("GATE torboxmount: rclone already alive (PID " + $rcloneT[0].ProcessId + "); waiting up to 90s for T:\ instead of spawning a duplicate.") 'WARN'
+    if (Wait-PathHealthy -LiteralPath $TorboxPath -TimeoutSec 90) {
+      Write-SupLog 'GATE torboxmount: OK after wait (T:\ present, no duplicate spawned).'
+      Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT[0].ProcessId
+      return $true
+    }
+    Write-SupLog 'GATE torboxmount: FAILED (live rclone never produced T:\ in 90s).' 'ERROR'
+    return $false
+  }
   try {
     Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $TorboxMountScript + '"')) -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
   } catch {

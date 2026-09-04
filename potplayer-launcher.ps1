@@ -5,6 +5,52 @@
     [Parameter(Position=0, ValueFromRemainingArguments=$true)]
     [string[]]$rawArgs
 )
+# Force-foreground helper: restores the PotPlayer window if it opens behind
+# everything (foreground-lock) or starts minimized to tray with no taskbar button.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PotFgFix {
+    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+}
+'@ -ErrorAction SilentlyContinue
+$script:PotFgTried = $false
+function Restore-PotPlayerForeground {
+    # Best-effort only: never throws, never blocks launch.
+    try {
+        if ($script:PotFgTried) { return }
+        $script:PotFgTried = $true
+        Start-Sleep -Milliseconds 1500
+        $p = Get-Process -Name 'PotPlayerMini64','PotPlayer64','PotPlayer' -ErrorAction SilentlyContinue |
+             Sort-Object StartTime -Descending | Select-Object -First 1
+        if (-not $p) { Write-BridgeLog 'FOREGROUND: no PotPlayer process found after launch.'; return }
+        $h = [IntPtr]$p.MainWindowHandle
+        $tries = 0
+        while (($h -eq [IntPtr]::Zero) -and ($tries -lt 10)) {
+            Start-Sleep -Milliseconds 500
+            try { $p.Refresh() } catch {}
+            $h = [IntPtr]$p.MainWindowHandle
+            $tries++
+        }
+        if ($h -eq [IntPtr]::Zero) {
+            # Tray-minimize guard: visible process but no window handle = check tray.
+            Write-BridgeLog 'FOREGROUND: PotPlayer running with no window handle (likely tray-minimized). Disable tray-minimize in PotPlayer Preferences > General.';
+            return
+        }
+        if ([PotFgFix]::IsIconic($h)) { [void][PotFgFix]::ShowWindowAsync($h, 9) }  # SW_RESTORE
+        [void][PotFgFix]::ShowWindowAsync($h, 5)  # SW_SHOW
+        [void][PotFgFix]::SetForegroundWindow($h)
+        Write-BridgeLog 'FOREGROUND: PotPlayer window restored to foreground.'
+    } catch { Write-BridgeLog ("FOREGROUND: helper failed: " + $_.Exception.Message) }
+}
+function Start-PotPlayer {
+  # Single choke point for all 12 launch sites: launch, then best-effort foreground restore.
+  param([string]$FilePath, $ArgumentList, [string]$WindowStyle = 'Normal')
+  Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WindowStyle $WindowStyle | Out-Null
+  Restore-PotPlayerForeground
+}
 # DEFAULT: full-season playlist (whole series folder visible in PotPlayer, as before).
 # Opt-out to instant single + lazy next via -Single switch or env POTPLAYER_SINGLE=1.
 # -FullSeason switch / POTPLAYER_FULL_SEASON=1 kept for compat (both mean full season).
@@ -1299,12 +1345,12 @@ function Start-SelectedPotPlayer {
                     # Instant start: do NOT kill PotPlayer; /current replaces session.
                     $seekArgs = @()
                     if ($script:resumeSec -gt 0) { $seekArgs += '/seek=' + $script:resumeSec }
-                    Start-Process -FilePath $potExe -ArgumentList (@("`"$singleDpl`"", '/current') + $seekArgs) -WindowStyle Normal | Out-Null
+                    Start-PotPlayer -FilePath $potExe -ArgumentList (@("`"$singleDpl`"", '/current') + $seekArgs) -WindowStyle Normal | Out-Null
                     try { Start-LazyNextAppend $Path } catch {}
                     return
                 }
                 Write-BridgeLog "SINGLE: dpl write failed, direct launch $singlePlay"
-                Start-Process -FilePath $potExe -ArgumentList "`"$singlePlay`"", '/current' -WindowStyle Normal | Out-Null
+                Start-PotPlayer -FilePath $potExe -ArgumentList "`"$singlePlay`"", '/current' -WindowStyle Normal | Out-Null
                 try { Start-LazyNextAppend $Path } catch {}
                 return
             }
@@ -1324,7 +1370,7 @@ function Start-SelectedPotPlayer {
         Write-BridgeLog "PLAYLIST: launching reliable season playlist $reliablePlaylist seek=$($script:resumeSec)s"
         $seekArgs = @()
         if ($script:resumeSec -gt 0) { $seekArgs += '/seek=' + $script:resumeSec }
-        Start-Process -FilePath $potExe -ArgumentList (@("`"$reliablePlaylist`"") + $seekArgs) -WindowStyle Normal | Out-Null
+        Start-PotPlayer -FilePath $potExe -ArgumentList (@("`"$reliablePlaylist`"") + $seekArgs) -WindowStyle Normal | Out-Null
         return
     }
 
@@ -1402,7 +1448,7 @@ function Start-SelectedPotPlayer {
                             }
                             [System.IO.File]::WriteAllLines($playlistPath, $lines, [System.Text.Encoding]::Unicode)
                             Write-BridgeLog "HTTP stale Torbox playlist via API full $($apiFiles.Count) with numeric file IDs: $playlistPath"
-                            Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+                            Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
                             return
                         }
                         # Fallback: use rclone ls for torbox: parent folder
@@ -1458,7 +1504,7 @@ function Start-SelectedPotPlayer {
                             }
                             [System.IO.File]::WriteAllLines($playlistPath, $lines, [System.Text.Encoding]::Unicode)
                             Write-BridgeLog "HTTP stale Torbox playlist via API full $($sorted.Count) http: $playlistPath"
-                            Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+                            Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
                             return
                         }
                     } catch { Write-BridgeLog "HTTP stale API playlist fail $_" }
@@ -1466,7 +1512,7 @@ function Start-SelectedPotPlayer {
                 if(-not (Test-Path -LiteralPath $parentDir)){
                     # No T:\ parent and not handled above, fallback to single HTTP
                     Write-BridgeLog "HTTP stale parent not visible and no API, launching single $Path"
-                    Start-Process -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
+                    Start-PotPlayer -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
                     return
                 }
                 $niceFileName = if($script:cdnNiceTitle){ $script:cdnNiceTitle } else { [System.IO.Path]::GetFileName($Path).Split('?')[0] }
@@ -1552,7 +1598,7 @@ function Start-SelectedPotPlayer {
                         }
                         [System.IO.File]::WriteAllLines($playlistPath, $lines, [System.Text.Encoding]::Unicode)
                         Write-BridgeLog "HTTP GDrive playlist full $($allFiles.Count) http via 127.0.0.1:8888/gdrive: $playlistPath"
-                        Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+                        Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
                         return
                     } else {
                         $cdnMap = Get-TorboxBulkLinks $bulkNames
@@ -1580,7 +1626,7 @@ function Start-SelectedPotPlayer {
                     [System.IO.File]::WriteAllLines($playlistPath, $lines, [System.Text.Encoding]::Unicode)
                     $httpCount = @($cdnMap.Values | Where-Object { $_ -match "^https?://" }).Count + 1
                     Write-BridgeLog "HTTP playlist with nice title + full $($allFiles.Count) episodes ($httpCount http, rest T:\ fallback): $playlistPath (playname $niceTitle)"
-                    Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+                    Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
                     return
                 } else {
                     # Single file HTTP with nice title via temp playlist
@@ -1597,12 +1643,12 @@ function Start-SelectedPotPlayer {
                     $lines.Add("1*title*$niceTitle")
                     [System.IO.File]::WriteAllLines($playlistPath, $lines, [System.Text.Encoding]::Unicode)
                     Write-BridgeLog "HTTP single with nice title $niceTitle -> $playlistPath"
-                    Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+                    Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
                     return
                 }
             }
         } catch { Write-BridgeLog "HTTP playlist nice-title error: $_" }
-        Start-Process -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
+        Start-PotPlayer -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
         return
     }
 
@@ -1750,9 +1796,9 @@ function Start-SelectedPotPlayer {
     }
 
     if ($playlistPath) {
-        Start-Process -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
+        Start-PotPlayer -FilePath $potExe -ArgumentList "`"$playlistPath`"" -WindowStyle Normal | Out-Null
     } else {
-        Start-Process -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
+        Start-PotPlayer -FilePath $potExe -ArgumentList "`"$Path`"", '/current', '/play' -WindowStyle Normal | Out-Null
     }
 }
 
