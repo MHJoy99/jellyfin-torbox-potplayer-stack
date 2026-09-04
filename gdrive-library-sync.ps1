@@ -52,6 +52,8 @@ $script:RclonePacerMinSleep = '100ms'
 $script:RclonePacerBurst = '8'
 $script:ListingMaxAttempts = 4
 $script:ListingBaseDelaySeconds = 2
+$script:CircuitBreakerThreshold = 5
+$script:CircuitBreakerPauseMinutes = 15
 
 function Write-SyncLog {
     param([string]$Message, [ValidateSet('INFO', 'WARN', 'ERROR')][string]$Level = 'INFO')
@@ -272,6 +274,8 @@ function New-EmptyState {
         LastFileCount = 0
         LastRefreshStatus = 'never'
         LastError = ''
+        ConsecutiveFailures = 0
+        CircuitBreakerUntil = ''
     }
 }
 
@@ -284,6 +288,8 @@ function Load-State {
         if (-not $state.Version) { throw 'State file has no version.' }
         if ($null -eq $state.PendingPaths) { $state | Add-Member -NotePropertyName PendingPaths -NotePropertyValue @() }
         if ($null -eq $state.Files) { $state | Add-Member -NotePropertyName Files -NotePropertyValue @() }
+        if ($null -eq $state.PSObject.Properties['ConsecutiveFailures']) { $state | Add-Member -NotePropertyName ConsecutiveFailures -NotePropertyValue 0 }
+        if ($null -eq $state.PSObject.Properties['CircuitBreakerUntil']) { $state | Add-Member -NotePropertyName CircuitBreakerUntil -NotePropertyValue '' }
         return $state
     } catch {
         $badState = "$($script:StateFile).corrupt-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -301,6 +307,71 @@ function Save-State {
     $temporary = "$($script:StateFile).tmp-$PID"
     $State | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporary -Encoding UTF8
     Move-Item -LiteralPath $temporary -Destination $script:StateFile -Force
+}
+
+function Test-CircuitBreakerOpen {
+    param([Parameter(Mandatory)]$State)
+
+    $raw = [string]$State.CircuitBreakerUntil
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    try {
+        $until = [DateTime]::Parse($raw).ToUniversalTime()
+    } catch {
+        return $false
+    }
+    if ([DateTime]::UtcNow -lt $until) {
+        $remaining = [Math]::Ceiling(($until - [DateTime]::UtcNow).TotalMinutes)
+        Write-SyncLog "Circuit breaker OPEN (failures=$($State.ConsecutiveFailures)); pausing until $raw (~${remaining}m remaining). Skipping cycle." 'WARN'
+        return $true
+    }
+    return $false
+}
+
+function Register-CycleSuccess {
+    param([Parameter(Mandatory)]$State)
+
+    $State.ConsecutiveFailures = 0
+    $State.CircuitBreakerUntil = ''
+}
+
+function Register-CycleFailure {
+    param(
+        [Parameter(Mandatory)]$State,
+        [string]$ErrorMessage = ''
+    )
+
+    $count = 0
+    try { $count = [int]$State.ConsecutiveFailures } catch { $count = 0 }
+    $count++
+    $State.ConsecutiveFailures = $count
+    if ($count -ge $script:CircuitBreakerThreshold) {
+        $until = [DateTime]::UtcNow.AddMinutes($script:CircuitBreakerPauseMinutes).ToString('o')
+        $State.CircuitBreakerUntil = $until
+        Write-SyncLog "Circuit breaker TRIPPED after $count consecutive failures; pausing $($script:CircuitBreakerPauseMinutes) minutes until $until. Last error: $ErrorMessage" 'ERROR'
+    } else {
+        Write-SyncLog "Cycle failure $count/$($script:CircuitBreakerThreshold) (breaker opens at $($script:CircuitBreakerThreshold)): $ErrorMessage" 'WARN'
+    }
+}
+
+function Test-RcloneRcHealth {
+    param([int]$TimeoutSec = 5)
+
+    try {
+        try {
+            $null = Invoke-RestMethod -Uri "$($script:RcloneRcBase)/rc/noop" -Method Post -Body '{}' -ContentType 'application/json' -TimeoutSec $TimeoutSec
+            return $true
+        } catch {
+            $msg = [string]$_.Exception.Message
+            if ($msg -match '404') {
+                $null = Invoke-RestMethod -Uri "$($script:RcloneRcBase)/vfs/stats" -Method Post -Body '{}' -ContentType 'application/json' -TimeoutSec $TimeoutSec
+                return $true
+            }
+            throw
+        }
+    } catch {
+        Write-SyncLog "rclone RC health check FAILED ($($script:RcloneRcBase)): $($_.Exception.Message). Skipping cycle." 'WARN'
+        return $false
+    }
 }
 
 function Test-MediaRecord {
@@ -581,6 +652,12 @@ function Invoke-SyncCycle {
     param([switch]$ForceScan)
 
     $state = Load-State
+    if (Test-CircuitBreakerOpen $state) { return $false }
+    if (-not (Test-RcloneRcHealth)) {
+        Register-CycleFailure $state 'rclone RC health check failed'
+        Save-State $state
+        return $false
+    }
     try {
         $snapshot = Get-RemoteSnapshot
         $state.LastRemotePollUtc = [DateTime]::UtcNow.ToString('o')
@@ -651,6 +728,7 @@ function Invoke-SyncCycle {
         $state.LastSuccessfulRefreshUtc = [DateTime]::UtcNow.ToString('o')
         $state.LastRefreshStatus = 'healthy'
         $state.LastError = ''
+        Register-CycleSuccess $state
         Save-State $state
         Write-SyncLog 'Google Drive media and Jellyfin library are synchronized.'
         $true
@@ -658,6 +736,7 @@ function Invoke-SyncCycle {
             $errorPosition = (($_.InvocationInfo.PositionMessage -replace '\s+', ' ').Trim())
             $state.LastError = $_.Exception.Message
             $state.LastRefreshStatus = 'waiting-for-remote'
+            Register-CycleFailure $state $_.Exception.Message
             Save-State $state
             Write-SyncLog "Sync cycle failed; will retry without advancing state: $($_.Exception.Message) [$errorPosition]" 'ERROR'
             $false
@@ -759,6 +838,8 @@ function Write-Status {
         RefreshStatus = $state.LastRefreshStatus
         PendingFiles = @($state.PendingPaths).Count
         LastError = $state.LastError
+        ConsecutiveFailures = $state.ConsecutiveFailures
+        CircuitBreakerUntil = $state.CircuitBreakerUntil
     } | Format-List
 }
 
