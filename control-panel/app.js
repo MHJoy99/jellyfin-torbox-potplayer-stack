@@ -493,7 +493,9 @@ function ensureFilterUI() {
   const pane = els.activity ? els.activity.parentElement : null;
   if (!pane) return;
   let container = document.getElementById("activity-filters");
+  let fresh = false;
   if (!container) {
+    fresh = true;
     container = document.createElement("div");
     container.id = "activity-filters";
     container.className = "act-filters";
@@ -508,13 +510,22 @@ function ensureFilterUI() {
     const box = document.createElement("input");
     box.type = "checkbox";
     box.id = "activity-errors-only";
-    box.checked = Boolean(state.errorsOnly);
     toggle.appendChild(box);
     toggle.appendChild(document.createTextNode("Errors only"));
     container.appendChild(chips);
     container.appendChild(toggle);
     pane.insertBefore(container, els.activity);
-    chips.addEventListener("click", (event) => {
+  }
+  els.filters = container;
+  els.chips = container.querySelector("#activity-chips");
+  els.errorsOnly = container.querySelector("#activity-errors-only");
+  if (fresh && els.errorsOnly && typeof state !== "undefined") {
+    try { els.errorsOnly.checked = Boolean(state.errorsOnly); } catch (_) { /* keep default */ }
+  }
+  // Wire once: works for static markup and created markup alike (guarded vs double-binding).
+  if (els.chips && !els.chips.dataset.wired) {
+    els.chips.dataset.wired = "1";
+    els.chips.addEventListener("click", (event) => {
       const btn = event.target.closest("button[data-source]");
       if (!btn) return;
       const next = String(btn.dataset.source || "all").toLowerCase() || "all";
@@ -527,19 +538,19 @@ function ensureFilterUI() {
       }
       if (state.lastPayload) renderTimeline(state.lastPayload);
     });
-    box.addEventListener("change", () => {
-      state.errorsOnly = Boolean(box.checked);
+  }
+  if (els.errorsOnly && !els.errorsOnly.dataset.wired) {
+    els.errorsOnly.dataset.wired = "1";
+    els.errorsOnly.addEventListener("change", () => {
+      state.errorsOnly = Boolean(els.errorsOnly.checked);
       try {
-        localStorage.setItem(FILTER_STORAGE_ERRORS, box.checked ? "1" : "0");
+        localStorage.setItem(FILTER_STORAGE_ERRORS, els.errorsOnly.checked ? "1" : "0");
       } catch (_) {
         /* storage unavailable */
       }
       if (state.lastPayload) renderTimeline(state.lastPayload);
     });
   }
-  els.filters = container;
-  els.chips = container.querySelector("#activity-chips");
-  els.errorsOnly = container.querySelector("#activity-errors-only");
 }
 
 // F2: errors-only client toggle — single entry point for checkbox UI + keyboard shortcut.
