@@ -9,6 +9,25 @@
   <!-- Favicon: inline SVG (no external request, works offline) -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1522'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%234f8cff' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%237aa8ff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/app.css">
+  <style id="fetch-pill-styles">
+    .fetch-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--accent-ring, #334);color:var(--muted, #999);margin-left:8px;white-space:nowrap;}
+    .fetch-pill.is-live{color:#7dd88a;border-color:rgba(125,216,138,.4);}
+    .fetch-pill.is-fetching{color:#7aa8ff;border-color:rgba(122,168,255,.4);}
+    .fetch-pill.is-retry{color:#f0b35c;border-color:rgba(240,179,92,.45);}
+    .fetch-pill.is-error{color:#f06a6a;border-color:rgba(240,106,106,.45);}
+  </style>
+  <style id="activity-filter-styles">
+    .act-filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px;}
+    .act-chips{display:flex;flex-wrap:wrap;gap:6px;min-width:0;flex:1 1 auto;}
+    .act-filter-chip{cursor:pointer;font:inherit;}
+    .act-filter-chip:hover{border-color:var(--accent-ring);color:var(--text);}
+    .act-filter-chip.is-active{background:var(--accent-soft);border-color:var(--accent-ring);color:#cfe1ff;font-weight:700;}
+    .act-errors-toggle{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer;white-space:nowrap;user-select:none;}
+    .act-errors-toggle input{accent-color:var(--accent);width:13px;height:13px;margin:0;cursor:pointer;}
+    .act-item{cursor:copy;}
+    .act-item:hover .act-msg{text-decoration:underline dotted;}
+    .act-item.is-copied{outline:1px solid var(--accent-ring);border-radius:6px;}
+  </style>
 </head>
 <body>
   <header class="topbar">
@@ -31,6 +50,7 @@
           <span class="stack-chip-dot" aria-hidden="true"></span>
           <span id="stack-chip-label">Checking&hellip;</span>
         </span>
+        <span id="fetch-status-pill" class="fetch-pill is-idle" role="status" aria-live="polite" title="Fetch status">Idle</span>
         <span class="checked-indicator" id="last-checked" title="Last successful status poll">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="9"></circle>
@@ -119,6 +139,10 @@
           <span class="log-legend-item legend-error"><span class="legend-dot" aria-hidden="true"></span>Error</span>
         </div>
         <!-- Collapsible log section -->
+        <div class="act-filters" id="activity-filters">
+          <div class="act-chips" id="activity-chips" role="group" aria-label="Filter activity by source"></div>
+          <label class="act-errors-toggle" title="Show warnings and errors only"><input type="checkbox" id="activity-errors-only">Errors only</label>
+        </div>
         <details class="log-details" open>
           <summary class="log-summary" aria-label="Toggle recent logs">Recent logs</summary>
           <ol id="activity-log" class="activity-log" aria-live="polite"><li class="act-empty">Loading activity&hellip;</li></ol>

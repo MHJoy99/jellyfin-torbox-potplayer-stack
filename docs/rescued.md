@@ -94,7 +94,7 @@ Flags e.g. `8BIT_HDR_BANDING_RISK`, `INEFFICIENT_4K_CODEC_H264`, `IMAGE_SUBTITLE
 ## Port #3 — `tools/rescued/rclone_cache_inspector.py` (Winner #3)
 
 - **Origin:** `archive/old-main-2026-08-21:tools/rclone_cache_inspector.py`
-- **What changed:** header added; `--cache-dir` defaults to `$env:RCLONE_CACHE_DIR` (fallback old example `F:\rclone-cache\gdrive-media`); added `--DryRun`/`--dry-run`/`--WhatIf` preview for **all** purge paths (prints WOULD-PURGE/SKIP-DIRTY/SKIP-LOCKED + freed bytes, deletes nothing even with `--force`); purge guards unchanged (skip dirty + locked unless `--force`); stdout UTF-8 guard; no new deps.
+- **What changed:** header added; `--cache-dir` defaults to `$env:RCLONE_CACHE_DIR` (fallback: the old default cache dir); added `--DryRun`/`--dry-run`/`--WhatIf` preview for **all** purge paths (prints WOULD-PURGE/SKIP-DIRTY/SKIP-LOCKED + freed bytes, deletes nothing even with `--force`); purge guards unchanged (skip dirty + locked unless `--force`); stdout UTF-8 guard; no new deps.
 - **Secrets:** none.
 - **Writes + safe preview:** `scan/tree/lru/check-locks` read-only. Only `--purge-item/--purge-all` delete; always rehearse with `--DryRun` first.
 - **Verified:** `python -m py_compile` exit 0; stdlib-only (`os/sys/json/time/ctypes/argparse/datetime/pathlib/typing`); secret scan 0 hits.
