@@ -7,7 +7,8 @@ param(
     [string]$ItemId,
     [string]$UserId,
     [string]$Token,
-    [string]$ServerUrl = "http://localhost:8096"
+    [string]$ServerUrl = "http://localhost:8096",
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
@@ -40,12 +41,74 @@ if ($ItemId) {
     }
 }
 
+# --- Tracker resilience: backoff + DryRun (additive; event-free loop so $script: state is safe) ---
+$script:trkConsecutiveFailures = 0
+$script:trkBackoffSec = 0
+$script:trkNextRetryUtc = [DateTime]::MinValue
+
+function Write-TrackerLog {
+    param([string]$Message)
+    try {
+        $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        Write-Output "[$ts] $Message"
+    } catch {}
+}
+
+function Get-TrkBackoffSeconds {
+    param([int]$Failures)
+    try {
+        if ($Failures -le 0) { return 0 }
+        $s = [math]::Pow(2, $Failures)
+        if ($s -gt 60) { $s = 60 }
+        return [int]$s
+    } catch { return 5 }
+}
+
+function Test-JellyfinBackoff {
+    try {
+        if ([DateTime]::UtcNow -lt $script:trkNextRetryUtc) { return $false }
+    } catch {}
+    return $true
+}
+
+function Register-JellyfinSuccess {
+    try {
+        $script:trkConsecutiveFailures = 0
+        $script:trkBackoffSec = 0
+        $script:trkNextRetryUtc = [DateTime]::MinValue
+    } catch {}
+}
+
+function Register-JellyfinFailure {
+    try {
+        $script:trkConsecutiveFailures++
+        $script:trkBackoffSec = Get-TrkBackoffSeconds -Failures $script:trkConsecutiveFailures
+        $script:trkNextRetryUtc = [DateTime]::UtcNow.AddSeconds($script:trkBackoffSec)
+        Write-TrackerLog "Jellyfin down (failures=$($script:trkConsecutiveFailures)), backing off $($script:trkBackoffSec)s."
+    } catch {}
+}
+
 function Send-JellyfinRequest {
     param(
         [string]$Path,
         [string]$Method = "POST",
-        [hashtable]$Body = $null
+        [hashtable]$Body = $null,
+        [switch]$Force
     )
+    # DryRun: log-only, never HTTP (manual testing; launcher never passes -DryRun).
+    if ($DryRun) {
+        try {
+            $summary = "$Method $Path"
+            if ($Body -and $Body.ContainsKey('PositionTicks')) { $summary += " PositionTicks=$($Body['PositionTicks'])" }
+            if ($Body -and $Body.ContainsKey('ItemId')) { $summary += " ItemId=$($Body['ItemId'])" }
+            Write-TrackerLog "[DryRun] $summary"
+        } catch {}
+        return
+    }
+    # Backoff gate: skip non-critical traffic while Jellyfin is down (Force bypasses for Played/Stopped).
+    if (-not $Force) {
+        if (-not (Test-JellyfinBackoff)) { return }
+    }
     try {
         $headers = @{
             "Authorization" = "MediaBrowser Client=`"PotPlayer`", Device=`"Windows`", DeviceId=`"PotPlayer-Win32`", Version=`"1.0.0`", Token=`"$Token`""
@@ -54,22 +117,34 @@ function Send-JellyfinRequest {
         $url = "$ServerUrl$Path"
         if ($Body) {
             $jsonBody = $Body | ConvertTo-Json -Compress
-            Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -Body $jsonBody -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+            Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -Body $jsonBody -TimeoutSec 5 -ErrorAction Stop | Out-Null
         } else {
-            Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+            Invoke-RestMethod -Uri $url -Method $Method -Headers $headers -TimeoutSec 5 -ErrorAction Stop | Out-Null
         }
-    } catch {}
+        Register-JellyfinSuccess
+    } catch {
+        Register-JellyfinFailure
+    }
 }
 
 function Get-JellyfinJson {
-    param([string]$Path)
+    param([string]$Path, [switch]$Force)
+    if ($DryRun) {
+        try { Write-TrackerLog "[DryRun] GET $Path" } catch {}
+        return $null
+    }
+    if (-not $Force -and -not (Test-JellyfinBackoff)) { return $null }
     try {
         $headers = @{
             "Authorization" = "MediaBrowser Client=`"PotPlayer`", Device=`"Windows`", DeviceId=`"PotPlayer-Win32`", Version=`"1.0.0`", Token=`"$Token`""
         }
         $url = "$ServerUrl$Path"
-        return Invoke-RestMethod -Uri $url -Method GET -Headers $headers -TimeoutSec 5 -ErrorAction SilentlyContinue
-    } catch {}
+        $r = Invoke-RestMethod -Uri $url -Method GET -Headers $headers -TimeoutSec 5 -ErrorAction Stop
+        Register-JellyfinSuccess
+        return $r
+    } catch {
+        Register-JellyfinFailure
+    }
     return $null
 }
 
@@ -182,7 +257,7 @@ $seasonId = $null
 $seriesId = $null
 try {
     if ($ItemId -and $UserId) {
-        $detail = Get-JellyfinJson -Path "/Users/$UserId/Items/$ItemId"
+        $detail = Get-JellyfinJson -Path "/Users/$UserId/Items/$ItemId" -Force
         if ($detail) {
             $totalDurationSec = Get-DurationFromItem -Item $detail
             try { if ($detail.SeasonId) { $seasonId = [string]$detail.SeasonId } } catch {}
@@ -192,7 +267,7 @@ try {
 } catch {}
 try {
     if ($ItemId -and $UserId) {
-        $ud = Get-JellyfinJson -Path "/Users/$UserId/Items/$ItemId/UserData"
+        $ud = Get-JellyfinJson -Path "/Users/$UserId/Items/$ItemId/UserData" -Force
         $ppt = $null
         try { if ($ud -and $ud.PlaybackPositionTicks) { $ppt = $ud.PlaybackPositionTicks } } catch {}
         try { if ((-not $ppt) -and $ud -and $ud.UserData -and $ud.UserData.PlaybackPositionTicks) { $ppt = $ud.UserData.PlaybackPositionTicks } } catch {}
@@ -207,6 +282,7 @@ if ($resumeSec -lt 0) { $resumeSec = 0 }
 
 # Very first stdout line for launcher resume-seek wiring. Also returned at script end.
 Write-Output "RESUME=$resumeSec"
+if ($DryRun) { Write-TrackerLog "[DryRun] Tracker start ItemId=$ItemId UserId=$UserId Resume=${resumeSec}s Duration=${totalDurationSec}s." }
 $initialResumeSec = $resumeSec
 
 # 1. Report Playback Started
@@ -311,7 +387,7 @@ while ($true) {
             }
             if ($mapped -and $mapped.Id -and ([string]$mapped.Id -ne [string]$currentItemId)) {
                 if ((-not $isMarkedPlayed) -and ($segmentWatched -ge 60)) {
-                    Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST"
+                    Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST" -Force
                 }
                 $currentItemId = [string]$mapped.Id
                 $currentEpisodePath = $proxy.Name
@@ -349,7 +425,7 @@ while ($true) {
             foreach ($baseName in $siblingFiles.Keys) {
                 if ($atLower.Contains($baseName) -and (-not $curLower.Contains($baseName))) {
                     if ((-not $isMarkedPlayed) -and ($segmentWatched -ge 60)) {
-                        Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST"
+                        Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST" -Force
                     }
                     $currentEpisodePath = $siblingFiles[$baseName]
                     $currentLabel = $siblingFiles[$baseName]
@@ -388,7 +464,7 @@ while ($true) {
     if (-not $isMarkedPlayed) {
         try {
             if (($posSec -ge ($totalDurationSec * 0.8)) -or (($totalDurationSec -gt 0) -and ($posSec -ge 300) -and ($posSec -ge ($totalDurationSec * 0.5)))) {
-                Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST"
+                Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST" -Force
                 $isMarkedPlayed = $true
             }
         } catch {}
@@ -416,12 +492,12 @@ try {
 $finalTicks = [int64]($finalPosSec * 10000000)
 try {
     if ((-not $isMarkedPlayed) -and ($finalPosSec -ge 120) -and ($finalPosSec -ge ($totalDurationSec * 0.7))) {
-        Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST"
+        Send-JellyfinRequest -Path "/Users/$UserId/PlayedItems/$currentItemId" -Method "POST" -Force
     }
 } catch {}
 
 # Always POST Stopped with final ticks
-Send-JellyfinRequest -Path "/Sessions/Playing/Stopped" -Method "POST" -Body @{
+Send-JellyfinRequest -Path "/Sessions/Playing/Stopped" -Method "POST" -Force -Body @{
     ItemId = $currentItemId
     PositionTicks = $finalTicks
 }
