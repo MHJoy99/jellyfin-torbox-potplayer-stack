@@ -290,7 +290,8 @@ jobs:
           $pattern = 'ghp_[A-Za-z0-9]{20,}|-----BEGIN PRIVATE KEY-----|TORBOX_API_KEY\s*=\s*[''\"\"][A-Za-z0-9\-_\.]{8,}[''\"\"]|api\.torbox\.app.*token=[A-Za-z0-9\-_\.]{20,}'
           $files = Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\.git\\' }
           $raw = Select-String -Path ($files.FullName) -Pattern $pattern -ErrorAction SilentlyContinue
-          $hits = $raw | Where-Object { $_.Line -notmatch '\$pattern' }
+          # Allowlist doc placeholders (README/HINT examples) so the scan only fires on real-looking values (2026-09-05).
+          $hits = $raw | Where-Object { ($_.Line -notmatch '\$pattern') -and ($_.Line -notmatch 'paste-your|your-torbox-key|<your-|example|placeholder|changeme|xxx+') }
           $count = @($hits).Count
           if ($null -ne $hits -and $count -gt 0) {
             foreach ($h in $hits) {

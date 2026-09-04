@@ -34,7 +34,7 @@ Get from zero to playing in under a minute (after prerequisites are installed):
 ```powershell
 git clone https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack.git
 cd jellyfin-torbox-potplayer-stack
-$env:TORBOX_API_KEY = "paste-your-torbox-key-here"  # session-only, never committed
+$env:TORBOX_API_KEY = "<your-torbox-key>"  # session-only, never committed
 pwsh -File install-all.ps1
 ```
 
