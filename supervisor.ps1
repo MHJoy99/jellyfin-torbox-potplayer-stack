@@ -41,7 +41,7 @@
     C:\Users\Administrator\AppData\Local\Programs\Python\Python311\pythonw.exe
 #>
 param(
-  [ValidateSet('Run', 'Start', 'Stop', 'Status')]
+  [ValidateSet('Run', 'Start', 'Stop', 'Status', 'Forensics')]
   [string]$Mode = 'Run'
 )
 
@@ -115,6 +115,17 @@ function Write-SupLog {
     }
     $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $line = "[$ts] [$Level] $Message"
+    try {
+      # Log rotation: 10MB cap, keep 5 generations (supervisor.log.1..5).
+      if ((Test-Path -LiteralPath $LogFile) -and ((Get-Item -LiteralPath $LogFile -ErrorAction SilentlyContinue).Length -gt 10MB)) {
+        for ($g = 4; $g -ge 1; $g--) {
+          $src = "$LogFile.$g"
+          $dst = "$LogFile." + ($g + 1)
+          if (Test-Path -LiteralPath $src) { Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction SilentlyContinue }
+        }
+        Move-Item -LiteralPath $LogFile -Destination "$LogFile.1" -Force -ErrorAction SilentlyContinue
+      }
+    } catch { }
     Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
     Write-Host $line
   } catch { }
@@ -794,6 +805,58 @@ function Test-ServicePidAlive {
   return $false
 }
 
+# crash-loop alert: restart timestamps per service (log-only, never changes restart behavior)
+$script:RestartTimes = @{}
+
+function Register-RestartForAlert {
+  param([string]$Svc)
+  try {
+    if (-not $script:RestartTimes.ContainsKey($Svc)) { $script:RestartTimes[$Svc] = [System.Collections.Generic.List[DateTime]]::new() }
+    $list = $script:RestartTimes[$Svc]
+    $list.Add((Get-Date))
+    $cutoff = (Get-Date).AddMinutes(-10)
+    for ($i = $list.Count - 1; $i -ge 0; $i--) {
+      if ($list[$i] -lt $cutoff) { $list.RemoveAt($i) }
+    }
+    if ($list.Count -ge 5) {
+      Write-SupLog ("ALERT ${Svc}: crash-loop suspected ($($list.Count) restarts in last 10m); investigate logs before it wedges ports.") 'ERROR'
+    }
+  } catch { }
+}
+
+function New-ForensicsBundle {
+  try {
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $backupDir = Join-Path 'F:\Jellyfin' 'backups'
+    if (-not (Test-Path -LiteralPath $backupDir)) { New-Item -ItemType Directory -Force -Path $backupDir | Out-Null }
+    $bundle = Join-Path $backupDir ("forensics-$stamp.zip")
+    $items = @()
+    if (Test-Path -LiteralPath $LogDir) { $items += (Get-ChildItem -LiteralPath $LogDir -File -Filter '*.log' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName) }
+    if (Test-Path -LiteralPath $RunDir) { $items += (Get-ChildItem -LiteralPath $RunDir -File -Filter '*.pid' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName) }
+    $stateFile = Join-Path 'F:\Jellyfin' 'config\gdrive-library-sync.state.json'
+    if (Test-Path -LiteralPath $stateFile) { $items += $stateFile }
+    if ($items.Count -eq 0) { Write-SupLog 'FORENSICS: nothing to bundle.' 'WARN'; return }
+    # Stage via copy first: live logs may be locked for exclusive write.
+    $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("forensics-$stamp")
+    New-Item -ItemType Directory -Force -Path $stage | Out-Null
+    $staged = 0
+    foreach ($src in $items) {
+      try {
+        Copy-Item -LiteralPath $src -Destination (Join-Path $stage (Split-Path -Leaf $src)) -Force -ErrorAction Stop
+        $staged++
+      } catch {
+        Write-SupLog ("FORENSICS: skipped locked file: $src") 'WARN'
+      }
+    }
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $bundle -Force -ErrorAction Stop
+    Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    Write-SupLog ("FORENSICS: bundle written: $bundle ($staged files).")
+    Write-Output $bundle
+  } catch {
+    Write-SupLog ("FORENSICS: bundle failed: " + $_.Exception.Message) 'ERROR'
+  }
+}
+
 function Restart-OneService {
   param([string]$Svc)
   switch ($Svc) {
@@ -871,6 +934,7 @@ function Invoke-WatchdogOnce {
     Write-SupLog ("WATCHDOG ${svc}: unhealthy (pidAlive=$pidAlive); restarting ($why).") 'WARN'
     $ok = Restart-OneService -Svc $svc
     $script:LastRestart[$svc] = Get-Date
+    Register-RestartForAlert -Svc $svc
     if ($ok) {
       Write-SupLog "WATCHDOG ${svc}: restart OK."
       $script:FailCount[$svc] = 0
@@ -903,6 +967,10 @@ switch ($Mode) {
     $rows = Get-StackStatus
     $rows | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
     Write-SupLog 'STATUS: reported.'
+    return
+  }
+  'Forensics' {
+    New-ForensicsBundle
     return
   }
   'Stop' {
