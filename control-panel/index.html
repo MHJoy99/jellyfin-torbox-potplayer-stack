@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#070b12">
   <title>Jellyfin Control Panel</title>
+  <!-- Favicon: inline SVG (no external request, works offline) -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230e1522'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%234f8cff' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%237aa8ff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/app.css">
 </head>
@@ -19,7 +21,7 @@
           </svg>
         </div>
         <div class="brand-text">
-          <h1>Jellyfin Control Panel</h1>
+          <h1><span id="status-dot" class="status-dot is-loading" aria-hidden="true"></span> Jellyfin Control Panel</h1>
           <p class="brand-sub">Local media stack &middot; localhost only</p>
         </div>
       </div>
@@ -45,19 +47,19 @@
       </div>
 
       <div class="global-actions" role="group" aria-label="Stack actions">
-        <button class="btn btn-primary" data-action="start" data-service="all" type="button">
+        <button class="btn btn-primary" data-action="start" data-service="all" type="button" aria-label="Start all services">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
           Start all
         </button>
-        <button class="btn btn-secondary" data-action="restart" data-service="all" type="button">
+        <button class="btn btn-secondary" data-action="restart" data-service="all" type="button" aria-label="Restart all services">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
           Restart all
         </button>
-        <button class="btn btn-secondary" data-action="sync" data-service="torbox-sync" type="button">
+        <button class="btn btn-secondary" data-action="sync" data-service="torbox-sync" type="button" aria-label="Sync TorBox now">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.7-4L4 9"></path><path d="M4 4v5h5"></path><path d="M4 13a8 8 0 0 0 14.7 4L20 15"></path><path d="M20 20v-5h-5"></path></svg>
           Sync TorBox
         </button>
-        <button class="btn btn-danger" data-action="stop" data-service="all" type="button">
+        <button class="btn btn-danger" data-action="stop" data-service="all" type="button" aria-label="Stop all services">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
           Stop all
         </button>
@@ -72,14 +74,35 @@
           <h2>Services</h2>
           <span class="pane-hint">Health checks run against the real local endpoints</span>
         </div>
-        <div id="services" class="service-grid" aria-live="polite" aria-busy="false"></div>
+        <div id="services" class="service-grid" aria-live="polite" aria-busy="true">
+          <!-- Loading skeleton hooks (replaced by app.js render/skeletonCards) -->
+          <article class="service-card skeleton" aria-hidden="true">
+            <div class="sk sk-w45"></div>
+            <div class="sk sk-w80"></div>
+            <div class="sk sk-w60"></div>
+            <div class="sk sk-w90"></div>
+          </article>
+          <article class="service-card skeleton" aria-hidden="true">
+            <div class="sk sk-w45"></div>
+            <div class="sk sk-w80"></div>
+            <div class="sk sk-w60"></div>
+            <div class="sk sk-w90"></div>
+          </article>
+        </div>
 
         <section class="playback-pane" aria-label="Playback readiness">
           <div class="pane-heading">
             <h2>Playback</h2>
             <span class="pane-hint">Latest reliable playlist</span>
           </div>
-          <div id="playback-status" aria-live="polite"></div>
+          <div id="playback-status" aria-live="polite" aria-busy="true">
+            <!-- Loading skeleton hook (replaced by app.js playbackCard/playbackSkeleton) -->
+            <article class="playback-card skeleton" aria-hidden="true">
+              <div class="sk sk-w45"></div>
+              <div class="sk sk-w80"></div>
+              <div class="sk sk-w60"></div>
+            </article>
+          </div>
         </section>
       </section>
 
@@ -88,13 +111,28 @@
           <h2>Activity</h2>
           <span class="pane-hint">Auto-refreshes</span>
         </div>
-        <ol id="activity-log" class="activity-log" aria-live="polite"></ol>
+        <!-- Log-level color legend -->
+        <div class="log-legend" aria-label="Log level legend">
+          <span class="log-legend-title">Levels:</span>
+          <span class="log-legend-item legend-info"><span class="legend-dot" aria-hidden="true"></span>Info</span>
+          <span class="log-legend-item legend-warn"><span class="legend-dot" aria-hidden="true"></span>Warn</span>
+          <span class="log-legend-item legend-error"><span class="legend-dot" aria-hidden="true"></span>Error</span>
+        </div>
+        <!-- Collapsible log section -->
+        <details class="log-details" open>
+          <summary class="log-summary" aria-label="Toggle recent logs">Recent logs</summary>
+          <ol id="activity-log" class="activity-log" aria-live="polite"><li class="act-empty">Loading activity&hellip;</li></ol>
+        </details>
+        <details class="log-details log-help">
+          <summary class="log-summary" aria-label="Toggle log level help">About log levels</summary>
+          <p class="log-help-text">Info = routine panel actions. Warn = degraded but running. Error = failed action or stopped service.</p>
+        </details>
       </aside>
     </div>
 
     <footer class="footer-bar">
       <span class="footer-note">The panel only acts when you press a button &middot; bound to 127.0.0.1:18080</span>
-      <a class="btn btn-ghost" id="open-jellyfin" href="http://127.0.0.1:8096/" target="_blank" rel="noopener">
+      <a class="btn btn-ghost" id="open-jellyfin" href="http://127.0.0.1:8096/" target="_blank" rel="noopener" aria-label="Open Jellyfin in new tab">
         Open Jellyfin
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"></path><path d="M20 4L10 14"></path><path d="M20 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h6"></path></svg>
       </a>
