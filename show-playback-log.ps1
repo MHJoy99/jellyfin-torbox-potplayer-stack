@@ -6,6 +6,8 @@
 #   (F9)  Always-on-top toggle + copy-selected-line button.
 #   (F10) Robust coloring via -match only (no stored pattern objects; they are NULL in Tick)
 #         + SilentlyContinue inside Tick. Secrets: none hardcoded.
+#   (F11) No-blink incremental rendering: new log lines are appended, the view is
+#         never cleared in steady state (full rebuild only on first show / filter change).
 param(
     [string]$EpisodeHint = "",
     [string]$ItemId = ""
@@ -108,6 +110,12 @@ $global:WL_defaultColor = [System.Drawing.Color]::LightGray
 $global:WL_redColor = [System.Drawing.Color]::FromArgb(255, 107, 107)
 $global:WL_greenColor = [System.Drawing.Color]::FromArgb(105, 255, 150)
 $global:WL_headerColor = [System.Drawing.Color]::FromArgb(255, 220, 100)
+# ---- No-blink incremental rendering: append only new log lines, never Clear() in steady state ----
+$global:WL_tails = @{}
+$global:WL_viewReady = $false
+$global:WL_lastRefresh = [DateTime]::MinValue
+$global:WL_refreshMs = 2500
+$global:WL_maxLines = 800
 
 $form = New-Object System.Windows.Forms.Form
 $form.Size = New-Object System.Drawing.Size(1000, 700)
@@ -194,41 +202,51 @@ function Test-IsErrorLine([string]$line) {
     return $false
 }
 
-function Update-View {
+function Get-WatchSections {
+    return @(
+        @{ Name = "potplayer-launcher.log"; Path = $launcherLog },
+        @{ Name = "torbox-proxy.log"; Path = $proxyLog },
+        @{ Name = "potplayer-bridge.log"; Path = $bridgeLog }
+    )
+}
+
+# Render one line through filters + coloring. Returns $true when appended.
+function Add-RenderLine([string]$line) {
+    try {
+        # (F8) Text filter: substring, case-insensitive.
+        if (-not [string]::IsNullOrWhiteSpace($global:WL_filterText)) {
+            if ($line.IndexOf($global:WL_filterText, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+        }
+        # (F8) Errors-only filter.
+        if ($global:WL_errorsOnly) {
+            if (-not (Test-IsErrorLine $line)) { return $false }
+        }
+        # (F10) Coloring via -match only.
+        $c = $global:WL_defaultColor
+        if ($line -match '(ERROR|FAIL|EXCEPTION|502|429|416)') { $c = $global:WL_redColor }
+        elseif (-not [string]::IsNullOrWhiteSpace($global:WL_hint) -and $line.IndexOf($global:WL_hint, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $c = $global:WL_redColor }
+        elseif (-not [string]::IsNullOrWhiteSpace($global:WL_itemId) -and $line.IndexOf($global:WL_itemId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $c = $global:WL_redColor }
+        elseif ($line -match '(206|Playing|HIT)') { $c = $global:WL_greenColor }
+        Add-ColorLine $line $c
+        return $true
+    } catch { return $false }
+}
+
+# Full rebuild: only on first show and when filters change (single blink on user action).
+function Reset-View {
     try {
         $rtb.SuspendLayout()
         $rtb.Clear()
-        $sections = @(
-            @{ Name = "potplayer-launcher.log"; Path = $launcherLog },
-            @{ Name = "torbox-proxy.log"; Path = $proxyLog },
-            @{ Name = "potplayer-bridge.log"; Path = $bridgeLog }
-        )
-        foreach ($s in $sections) {
-            Add-ColorLine ("=== " + $s.Name + " (last 25) ===") $global:WL_headerColor
+        $global:WL_tails = @{}
+        foreach ($s in Get-WatchSections) {
+            Add-ColorLine ("=== " + $s.Name + " (live tail) ===") $global:WL_headerColor
             $lines = @(Get-LogTail -Path $s.Path -Count 25 -ErrorAction SilentlyContinue)
             if ($lines.Count -eq 0) { $lines = @("(empty)") }
-            foreach ($line in $lines) {
-                try {
-                    # (F8) Text filter: substring, case-insensitive.
-                    if (-not [string]::IsNullOrWhiteSpace($global:WL_filterText)) {
-                        if ($line.IndexOf($global:WL_filterText, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
-                    }
-                    # (F8) Errors-only filter.
-                    if ($global:WL_errorsOnly) {
-                        if (-not (Test-IsErrorLine $line)) { continue }
-                    }
-                    # (F10) Coloring via -match only.
-                    $c = $global:WL_defaultColor
-                    if ($line -match '(ERROR|FAIL|EXCEPTION|502|429|416)') { $c = $global:WL_redColor }
-                    elseif (-not [string]::IsNullOrWhiteSpace($global:WL_hint) -and $line.IndexOf($global:WL_hint, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $c = $global:WL_redColor }
-                    elseif (-not [string]::IsNullOrWhiteSpace($global:WL_itemId) -and $line.IndexOf($global:WL_itemId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $c = $global:WL_redColor }
-                    elseif ($line -match '(206|Playing|HIT)') { $c = $global:WL_greenColor }
-                    Add-ColorLine $line $c
-                } catch {}
-            }
+            foreach ($line in $lines) { [void](Add-RenderLine $line) }
+            $global:WL_tails[$s.Name] = $lines
             Add-ColorLine "" $global:WL_defaultColor
         }
-        # (F7) Follow: auto-scroll only when follow is on.
+        $global:WL_viewReady = $true
         if ($global:WL_follow) {
             try {
                 $rtb.SelectionStart = $rtb.TextLength
@@ -236,6 +254,64 @@ function Update-View {
             } catch {}
         }
         $rtb.ResumeLayout()
+    } catch {}
+}
+
+function Update-View {
+    param([switch]$Force)
+    try {
+        if ($global:WL_paused -and -not $Force) { return }
+        $now = Get-Date
+        if (-not $Force -and ($now - $global:WL_lastRefresh).TotalMilliseconds -lt $global:WL_refreshMs) { return }
+        $global:WL_lastRefresh = $now
+        if ($Force -or -not $global:WL_viewReady) { Reset-View; return }
+        # Incremental pass: append only lines newer than each section's last rendered line.
+        $needFull = $false
+        $appendPlan = @()
+        foreach ($s in Get-WatchSections) {
+            $raw = @(Get-LogTail -Path $s.Path -Count 25 -ErrorAction SilentlyContinue)
+            if ($raw.Count -eq 0) { $raw = @("(empty)") }
+            $old = $global:WL_tails[$s.Name]
+            if ($null -eq $old -or $old.Count -eq 0) { $needFull = $true; break }
+            $anchor = $old[$old.Count - 1]
+            $idx = -1
+            for ($i = $raw.Count - 1; $i -ge 0; $i--) { if ($raw[$i] -ceq $anchor) { $idx = $i; break } }
+            if ($idx -lt 0) { $needFull = $true; break }
+            $newOnes = @()
+            for ($j = $idx + 1; $j -lt $raw.Count; $j++) { $newOnes += $raw[$j] }
+            $appendPlan += @{ Name = $s.Name; Raw = $raw; New = $newOnes }
+        }
+        if ($needFull) { Reset-View; return }
+        $selStart = 0
+        $selLen = 0
+        try { $selStart = $rtb.SelectionStart; $selLen = $rtb.SelectionLength } catch {}
+        try { $rtb.SuspendLayout() } catch {}
+        foreach ($p in $appendPlan) {
+            $global:WL_tails[$p.Name] = $p.Raw
+            foreach ($line in $p.New) { [void](Add-RenderLine $line) }
+        }
+        # Trim oldest lines from the top once over cap (keeps colors, no Clear).
+        try {
+            $lc = $rtb.Lines.Count
+            if ($lc -gt $global:WL_maxLines) {
+                $cutAt = $rtb.GetFirstCharIndexFromLine($lc - $global:WL_maxLines)
+                if ($cutAt -gt 0) {
+                    $rtb.Select(0, $cutAt)
+                    $rtb.SelectedText = ""
+                    $selStart = $selStart - $cutAt
+                    if ($selStart -lt 0) { $selStart = 0 }
+                }
+            }
+        } catch {}
+        if ($global:WL_follow) {
+            try {
+                $rtb.SelectionStart = $rtb.TextLength
+                $rtb.ScrollToCaret()
+            } catch {}
+        } else {
+            try { $rtb.SelectionStart = $selStart; $rtb.SelectionLength = $selLen } catch {}
+        }
+        try { $rtb.ResumeLayout() } catch {}
     } catch {}
 }
 
@@ -252,14 +328,16 @@ $btnPauseFollow.Add_Click({
 $chkErrorsOnly.Add_CheckedChanged({
     try {
         $global:WL_errorsOnly = $chkErrorsOnly.Checked
-        if (-not $global:WL_paused) { Update-View }
+        $global:WL_viewReady = $false
+        if (-not $global:WL_paused) { Reset-View }
     } catch {}
 })
 
 $txtFilter.Add_TextChanged({
     try {
         $global:WL_filterText = $txtFilter.Text
-        if (-not $global:WL_paused) { Update-View }
+        $global:WL_viewReady = $false
+        if (-not $global:WL_paused) { Reset-View }
     } catch {}
 })
 
