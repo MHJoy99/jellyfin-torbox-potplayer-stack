@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 112" width="360" height="112" role="img" aria-labelledby="nmTitle nmDesc">
+  <title id="nmTitle">NexusMedia Jellyfin Stack logo</title>
+  <desc id="nmDesc">Rounded dark tile with a blue play button over two teal stack layers, beside the NexusMedia wordmark. Original mark.</desc>
+  <rect x="8" y="16" width="80" height="80" rx="20" fill="#0E1522"/>
+  <rect x="8" y="16" width="80" height="80" rx="20" fill="none" stroke="#4F8CFF" stroke-width="2.5"/>
+  <circle cx="48" cy="46" r="17" fill="#4F8CFF"/>
+  <path d="M43 37.5 L59 46 L43 54.5 Z" fill="#FFFFFF"/>
+  <path d="M28 70 L48 78 L68 70" fill="none" stroke="#38D6C0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M28 79 L48 87 L68 79" fill="none" stroke="#38D6C0" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.65"/>
+  <text x="104" y="58" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="32" font-weight="700" letter-spacing="0.5" fill="#0E1522">NexusMedia</text>
+  <text x="105" y="82" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" letter-spacing="3.5" fill="#2F6BFF">JELLYFIN STACK</text>
+</svg>
