@@ -16,7 +16,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Run', 'Once', 'Install', 'Uninstall', 'Status', 'Test', 'Validate')]
+    [ValidateSet('Run', 'Once', 'Install', 'Uninstall', 'Status', 'Test', 'Validate', 'WhatIf', 'OrphanReport')]
     [string]$Mode = 'Run',
     [ValidateRange(15, 3600)]
     [int]$PollSeconds = 30,
@@ -54,6 +54,9 @@ $script:ListingMaxAttempts = 4
 $script:ListingBaseDelaySeconds = 2
 $script:CircuitBreakerThreshold = 5
 $script:CircuitBreakerPauseMinutes = 15
+$script:StaleThresholdHours = 24
+$script:MaxDurationHistory = 20
+$script:HeartbeatLog = Join-Path $script:BaseDir 'logs\gdrive-library-sync.heartbeat.log'
 
 function Write-SyncLog {
     param([string]$Message, [ValidateSet('INFO', 'WARN', 'ERROR')][string]$Level = 'INFO')
@@ -276,6 +279,10 @@ function New-EmptyState {
         LastError = ''
         ConsecutiveFailures = 0
         CircuitBreakerUntil = ''
+        LastChangeUtc = ''
+        SyncDurationHistory = @()
+        TotalCycles = 0
+        LastCycleSeconds = 0
     }
 }
 
@@ -290,6 +297,10 @@ function Load-State {
         if ($null -eq $state.Files) { $state | Add-Member -NotePropertyName Files -NotePropertyValue @() }
         if ($null -eq $state.PSObject.Properties['ConsecutiveFailures']) { $state | Add-Member -NotePropertyName ConsecutiveFailures -NotePropertyValue 0 }
         if ($null -eq $state.PSObject.Properties['CircuitBreakerUntil']) { $state | Add-Member -NotePropertyName CircuitBreakerUntil -NotePropertyValue '' }
+        if ($null -eq $state.PSObject.Properties['LastChangeUtc']) { $state | Add-Member -NotePropertyName LastChangeUtc -NotePropertyValue '' }
+        if ($null -eq $state.PSObject.Properties['SyncDurationHistory']) { $state | Add-Member -NotePropertyName SyncDurationHistory -NotePropertyValue @() }
+        if ($null -eq $state.PSObject.Properties['TotalCycles']) { $state | Add-Member -NotePropertyName TotalCycles -NotePropertyValue 0 }
+        if ($null -eq $state.PSObject.Properties['LastCycleSeconds']) { $state | Add-Member -NotePropertyName LastCycleSeconds -NotePropertyValue 0 }
         return $state
     } catch {
         $badState = "$($script:StateFile).corrupt-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -372,6 +383,117 @@ function Test-RcloneRcHealth {
         Write-SyncLog "rclone RC health check FAILED ($($script:RcloneRcBase)): $($_.Exception.Message). Skipping cycle." 'WARN'
         return $false
     }
+}
+
+function Write-HeartbeatLog {
+    param(
+        [double]$CycleSeconds,
+        [string]$Status = 'unknown',
+        [int]$PendingCount = 0,
+        [int]$FileCount = 0
+    )
+
+    try {
+        $parent = Split-Path -Parent $script:HeartbeatLog
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+        $rounded = [Math]::Round($CycleSeconds, 2)
+        $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [HEARTBEAT] cycle-time=${rounded}s status=$Status pending=$PendingCount files=$FileCount"
+        Add-Content -LiteralPath $script:HeartbeatLog -Value $line -Encoding UTF8
+        Write-SyncLog "Heartbeat: cycle-time=${rounded}s status=$Status pending=$PendingCount files=$FileCount"
+    } catch {}
+}
+
+function Test-StaleThreshold {
+    param([Parameter(Mandatory)]$State)
+
+    $raw = [string]$State.LastChangeUtc
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    try {
+        $lastChange = [DateTime]::Parse($raw).ToUniversalTime()
+    } catch {
+        return $false
+    }
+    $hours = ([DateTime]::UtcNow - $lastChange).TotalHours
+    if ($hours -ge $script:StaleThresholdHours) {
+        Write-SyncLog "STALE WARNING: no library change observed in $([Math]::Round($hours, 1))h (threshold $($script:StaleThresholdHours)h, lastChange=$raw)." 'WARN'
+        return $true
+    }
+    return $false
+}
+
+function Add-SyncDurationHistory {
+    param(
+        [Parameter(Mandatory)]$State,
+        [Parameter(Mandatory)][double]$Seconds
+    )
+
+    $rounded = [Math]::Round($Seconds, 2)
+    $history = @()
+    if ($null -ne $State.SyncDurationHistory) { $history = @($State.SyncDurationHistory) }
+    $history += $rounded
+    if ($history.Count -gt $script:MaxDurationHistory) {
+        $history = @($history | Select-Object -Last $script:MaxDurationHistory)
+    }
+    $State.SyncDurationHistory = @($history)
+    $State.LastCycleSeconds = $rounded
+    try { $State.TotalCycles = [int]$State.TotalCycles + 1 } catch { $State.TotalCycles = 1 }
+}
+
+function Invoke-WhatIfReport {
+    param($State)
+
+    Write-SyncLog 'WhatIf mode: scan + report, changing nothing (no state writes, no mount repair, no Jellyfin refresh).'
+    $snapshot = Get-RemoteSnapshot
+    $oldFiles = @()
+    if ($State -and $null -ne $State.Files) { $oldFiles = @($State.Files) }
+    $changed = @(Get-ChangedMountPaths -OldFiles $oldFiles -NewFiles $snapshot.Files)
+    Write-Output "WhatIf REPORT: $($snapshot.FileCount) remote files, $($changed.Count) changed media path(s); no changes made."
+    foreach ($p in @($changed | Select-Object -First 50)) {
+        Write-Output "WhatIf WOULD-SYNC: $p"
+    }
+    if ($changed.Count -gt 50) {
+        Write-Output "WhatIf ... and $($changed.Count - 50) more (truncated)."
+    }
+}
+
+function Invoke-OrphanReport {
+    # List-only: local video files with no remote counterpart. Never deletes.
+    Write-SyncLog 'Orphan-report mode started (list-only; nothing will be deleted).'
+    $snapshot = Get-RemoteSnapshot
+    $remoteKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparison]::OrdinalIgnoreCase)
+    foreach ($f in @($snapshot.Files)) {
+        if ($f -and $f.Key) { [void]$remoteKeys.Add([string]$f.Key) }
+    }
+    $orphans = [System.Collections.Generic.List[string]]::new()
+    foreach ($libRoot in @($script:LibraryRoots)) {
+        if (-not (Test-Path -LiteralPath $libRoot -PathType Container)) {
+            Write-SyncLog "Orphan scan: library root missing, skipping: $libRoot" 'WARN'
+            continue
+        }
+        $libName = Split-Path -Leaf $libRoot
+        $candidateRoots = @($script:RemoteRoots | Where-Object { $_ -like "*:$libName" })
+        if ($candidateRoots.Count -eq 0) { $candidateRoots = @($script:RemoteRoots) }
+        $localFiles = @(Get-ChildItem -LiteralPath $libRoot -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+            $script:VideoExtensions -contains $_.Extension.ToLowerInvariant()
+        })
+        foreach ($lf in $localFiles) {
+            $matched = $false
+            foreach ($rr in $candidateRoots) {
+                $rel = [System.IO.Path]::GetRelativePath($libRoot, $lf.FullName) -replace '\\', '/'
+                if ($remoteKeys.Contains("$rr|$rel")) { $matched = $true; break }
+            }
+            if (-not $matched) { [void]$orphans.Add($lf.FullName) }
+        }
+    }
+    $orphanList = @($orphans.ToArray())
+    Write-Output "Orphan REPORT: $($orphanList.Count) local file(s) with no remote counterpart (list-only)."
+    foreach ($o in @($orphanList | Select-Object -First 100)) {
+        Write-Output "Orphan: $o"
+    }
+    if ($orphanList.Count -gt 100) {
+        Write-Output "Orphan ... and $($orphanList.Count - 100) more (truncated)."
+    }
+    Write-SyncLog "Orphan-report: found $($orphanList.Count) orphan(s)."
 }
 
 function Test-MediaRecord {
@@ -663,6 +785,7 @@ function Invoke-SyncCycle {
         $state.LastRemotePollUtc = [DateTime]::UtcNow.ToString('o')
         $state.LastFileCount = $snapshot.FileCount
         $state.LastError = ''
+        [void](Test-StaleThreshold -State $state)
 
         $signatureChanged = $snapshot.Signature -ne [string]$state.LastObservedSignature
         if ($ForceScan -or $signatureChanged -or [string]::IsNullOrWhiteSpace([string]$state.LastSuccessfulSignature)) {
@@ -676,6 +799,7 @@ function Invoke-SyncCycle {
             )
             $state.PendingSignature = $snapshot.Signature
             $state.LastObservedSignature = $snapshot.Signature
+            $state.LastChangeUtc = [DateTime]::UtcNow.ToString('o')
             $state.Files = @($snapshot.Files)
             $state.LastRefreshStatus = 'pending'
             Save-State $state
@@ -840,6 +964,8 @@ function Write-Status {
         LastError = $state.LastError
         ConsecutiveFailures = $state.ConsecutiveFailures
         CircuitBreakerUntil = $state.CircuitBreakerUntil
+        TotalCycles = $state.TotalCycles
+        LastCycleSeconds = $state.LastCycleSeconds
     } | Format-List
 }
 
@@ -860,7 +986,18 @@ function Invoke-RunMode {
     try {
         Write-SyncLog "Run mode started (poll ${PollSeconds}s, forceScan=$([bool]$ForceScan))"
         do {
-            [void](Invoke-SyncCycle -ForceScan:$ForceScan)
+            $cycleSw = [System.Diagnostics.Stopwatch]::StartNew()
+            $cycleOk = $false
+            try { $cycleOk = [bool](Invoke-SyncCycle -ForceScan:$ForceScan) } catch { $cycleOk = $false }
+            $cycleSw.Stop()
+            try {
+                $hbState = Load-State
+                Add-SyncDurationHistory -State $hbState -Seconds $cycleSw.Elapsed.TotalSeconds
+                Save-State $hbState
+                $hbStatus = 'fail'
+                if ($cycleOk) { $hbStatus = 'ok' }
+                Write-HeartbeatLog -CycleSeconds $cycleSw.Elapsed.TotalSeconds -Status $hbStatus -PendingCount @($hbState.PendingPaths).Count -FileCount ([int]$hbState.LastFileCount)
+            } catch {}
             $ForceScan = $false
             if ($RunOnce) { break }
             Start-Sleep -Seconds $PollSeconds
@@ -873,6 +1010,8 @@ function Invoke-RunMode {
 
 switch ($Mode) {
     'Validate' { Invoke-ValidateOnly; break }
+    'WhatIf' { Invoke-WhatIfReport -State (Load-State); break }
+    'OrphanReport' { Invoke-OrphanReport; break }
     'Test' { Run-SelfTest; break }
     'Install' { Install-SyncTask; break }
     'Uninstall' { Uninstall-SyncTask; break }
