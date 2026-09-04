@@ -1,0 +1,371 @@
+name: CI
+"on":
+  push:
+    branches:
+      - main
+    paths:
+      - '**.ps1'
+      - '**.py'
+      - '**.js'
+      - '**.md'
+      - '**.yml'
+      - '**.yaml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '**.ps1'
+      - '**.py'
+      - '**.js'
+      - '**.md'
+      - '**.yml'
+      - '**.yaml'
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: pwsh
+jobs:
+  ps1-parse:
+    name: PS1 Parse
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Parse all PowerShell files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Recurse -Filter *.ps1 -File
+          if ($null -eq $files -or $files.Count -eq 0) {
+            Write-Host 'No PowerShell files found'
+            'No PowerShell files found' | Out-File -FilePath ps1-parse.log -Encoding utf8
+            exit 0
+          }
+          $failed = @()
+          foreach ($f in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              Write-Host ('FAIL ' + $f.FullName)
+              foreach ($e in $errors) {
+                Write-Host ($f.FullName + ':' + $e.Extent.StartLineNumber + ':' + $e.Extent.StartColumnNumber + ' ' + $e.Message)
+              }
+              $failed += $f.FullName
+            } else {
+              Write-Host ('OK ' + $f.FullName)
+            }
+          }
+          $failed | Out-File -FilePath ps1-parse.log -Encoding utf8
+          if ($failed.Count -gt 0) {
+            Write-Host ($failed.Count.ToString() + ' file(s) failed parse')
+            exit 1
+          }
+          Write-Host ('All ' + $files.Count.ToString() + ' PowerShell files parsed clean')
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'PS1 Parse summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| ps1-parse | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps1-parse-logs
+          path: ps1-parse.log
+          retention-days: 7
+          if-no-files-found: warn
+  python-compile:
+    name: Python Compile
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.11'
+          - '3.12'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile all Python files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Recurse -Filter *.py -File
+          if ($null -eq $files -or $files.Count -eq 0) {
+            Write-Host 'No Python files found'
+            'No Python files found' | Out-File -FilePath python-compile.log -Encoding utf8
+            exit 0
+          }
+          $failed = @()
+          foreach ($f in $files) {
+            Write-Host ('Compiling ' + $f.FullName)
+            python -m py_compile $f.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host ('FAIL ' + $f.FullName)
+              $failed += $f.FullName
+            } else {
+              Write-Host ('OK ' + $f.FullName)
+            }
+          }
+          $failed | Out-File -FilePath python-compile.log -Encoding utf8
+          if ($failed.Count -gt 0) {
+            Write-Host ($failed.Count.ToString() + ' file(s) failed compile')
+            exit 1
+          }
+          Write-Host ('All ' + $files.Count.ToString() + ' Python files compiled clean')
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'Python Compile summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| python-compile | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-compile-logs
+          path: python-compile.log
+          retention-days: 7
+          if-no-files-found: warn
+  js-syntax:
+    name: JS Syntax
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '20'
+          - '22'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host 'Checking app.js-level files with node --check'
+          $files = Get-ChildItem -Recurse -Filter *.js -File
+          if ($null -eq $files -or $files.Count -eq 0) {
+            Write-Host 'No JavaScript files found'
+            'No JavaScript files found' | Out-File -FilePath js-syntax.log -Encoding utf8
+            exit 0
+          }
+          $failed = @()
+          foreach ($f in $files) {
+            Write-Host ('Checking ' + $f.FullName)
+            node --check $f.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host ('FAIL ' + $f.FullName)
+              $failed += $f.FullName
+            } else {
+              Write-Host ('OK ' + $f.FullName)
+            }
+          }
+          $failed | Out-File -FilePath js-syntax.log -Encoding utf8
+          if ($failed.Count -gt 0) {
+            Write-Host ($failed.Count.ToString() + ' file(s) failed syntax check')
+            exit 1
+          }
+          Write-Host ('All ' + $files.Count.ToString() + ' JavaScript files passed syntax check')
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'JS Syntax summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| js-syntax | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-syntax-logs
+          path: js-syntax.log
+          retention-days: 7
+          if-no-files-found: warn
+  markdown-links:
+    name: Markdown Links
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Flag absolute local paths in Markdown
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host 'Flagging absolute local paths like F:\ or C:\ inside md'
+          $files = Get-ChildItem -Recurse -Filter *.md -File
+          if ($null -eq $files -or $files.Count -eq 0) {
+            Write-Host 'No Markdown files found'
+            'No Markdown files found' | Out-File -FilePath markdown-links.log -Encoding utf8
+            exit 0
+          }
+          $pattern = '[A-Za-z]:\\'
+          $found = Select-String -Path ($files.FullName) -Pattern $pattern -ErrorAction SilentlyContinue
+          if ($null -ne $found) {
+            Write-Host ($found.Count.ToString() + ' absolute local path match(es) found')
+            foreach ($m in $found) {
+              Write-Host ('::warning file=' + $m.Path + ',line=' + $m.LineNumber + '::Absolute local path ' + $m.Line.Trim())
+            }
+            $found | ForEach-Object { $_.Path + ':' + $_.LineNumber + ':' + $_.Line } | Out-File -FilePath markdown-links.log -Encoding utf8
+            'Markdown Links summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            '| File | Line | Match |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            '| --- | --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            foreach ($m in $found) {
+              ('| ' + $m.Path + ' | ' + $m.LineNumber + ' | ' + $m.Line.Trim() + ' |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            }
+            exit 0
+          }
+          Write-Host 'No absolute local paths found'
+          'No absolute local paths found' | Out-File -FilePath markdown-links.log -Encoding utf8
+          'Markdown Links summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| markdown-links | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'Markdown Links job done' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| markdown-links | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: markdown-links-logs
+          path: markdown-links.log
+          retention-days: 7
+          if-no-files-found: warn
+  no-secrets:
+    name: No Secrets
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Scan for hardcoded secrets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pattern = 'ghp_[A-Za-z0-9]{20,}|-----BEGIN PRIVATE KEY-----|TORBOX_API_KEY\s*=\s*[''\"\"][A-Za-z0-9\-_\.]{8,}[''\"\"]|api\.torbox\.app.*token=[A-Za-z0-9\-_\.]{20,}'
+          $files = Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\.git\\' }
+          $raw = Select-String -Path ($files.FullName) -Pattern $pattern -ErrorAction SilentlyContinue
+          $hits = $raw | Where-Object { $_.Line -notmatch '\$pattern' }
+          $count = @($hits).Count
+          if ($null -ne $hits -and $count -gt 0) {
+            foreach ($h in $hits) {
+              Write-Host ('::error file=' + $h.Path + ',line=' + $h.LineNumber + '::Potential secret match')
+              Write-Host ($h.Path + ':' + $h.LineNumber + ':' + $h.Line.Trim())
+            }
+            $hits | ForEach-Object { $_.Path + ':' + $_.LineNumber + ':' + $_.Line } | Out-File -FilePath no-secrets.log -Encoding utf8
+            Write-Host ($count.ToString() + ' potential secret(s) found')
+            exit 1
+          }
+          Write-Host 'No secrets found'
+          'No secrets found' | Out-File -FilePath no-secrets.log -Encoding utf8
+      - name: Write job summary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'No Secrets summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| no-secrets | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: no-secrets-logs
+          path: no-secrets.log
+          retention-days: 7
+          if-no-files-found: warn
+  status:
+    name: STATUS
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+    needs:
+      - ps1-parse
+      - python-compile
+      - js-syntax
+      - markdown-links
+      - no-secrets
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Show repository status
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host 'Repo: ${{ github.server_url }}/${{ github.repository }}'
+          Write-Host 'Branch: ${{ github.ref_name }}'
+          Write-Host 'Ref: ${{ github.ref }}'
+          Write-Host 'SHA: ${{ github.sha }}'
+          Write-Host 'Actor: ${{ github.actor }}'
+          Write-Host 'Event: ${{ github.event_name }}'
+      - name: Write summary table
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'CI STATUS summary' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| Job | Result |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          '| --- | --- |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| ps1-parse | ${{ needs.ps1-parse.result }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| python-compile | ${{ needs.python-compile.result }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| js-syntax | ${{ needs.js-syntax.result }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| markdown-links | ${{ needs.markdown-links.result }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| no-secrets | ${{ needs.no-secrets.result }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| Repo | ${{ github.server_url }}/${{ github.repository }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          ('| Branch | ${{ github.ref_name }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: status-logs
+          path: '*.log'
+          retention-days: 7
+          if-no-files-found: warn
