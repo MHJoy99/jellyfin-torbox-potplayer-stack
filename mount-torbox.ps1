@@ -17,6 +17,11 @@ if (Test-Path -LiteralPath $logFile) {
     }
 }
 
+$existing = Get-Process -Name rclone -ErrorAction SilentlyContinue | Where-Object {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction SilentlyContinue
+    $proc.CommandLine -match 'mount torbox:'
+}
+
 # Idempotent guard: a live mount serving T:\ must NEVER be restarted — the old
 # behavior killed a healthy mount on every supervisor/panel retry, and the fresh
 # cold mount never finished WinFsp init inside the 30s wait, causing a perpetual
@@ -24,10 +29,6 @@ if (Test-Path -LiteralPath $logFile) {
 if ($existing -and (Test-Path -LiteralPath "${driveLetter}\")) {
     Write-Host "Torbox mount already healthy (PID $($existing.Id), ${driveLetter}\ present); leaving it alone."
     return
-}
-$existing = Get-Process -Name rclone -ErrorAction SilentlyContinue | Where-Object {
-    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction SilentlyContinue
-    $proc.CommandLine -match 'mount torbox:'
 }
 if ($existing) {
     Write-Host "Stopping existing Torbox mount PID $($existing.Id)..."
