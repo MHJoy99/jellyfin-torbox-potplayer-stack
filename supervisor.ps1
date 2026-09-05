@@ -10,18 +10,20 @@
     - \MediaServer_TorboxSmartSync       -> SYNC ONLY (keep enabled, do not supervise)
     - \MediaServer_GoogleDriveLibrarySync-> SYNC ONLY (keep enabled, do not supervise)
     - \Mount Google Shared Drive R       -> gdrive F:\Media (rclone mount gdrive-media:, NSSM RcloneGdriveMount)
-    - mount-torbox.ps1                   -> torboxmount T:\ (E:\MediaServer\mount-torbox.ps1, NO scheduled task)
+    - mount-torbox.ps1                   -> torboxmount T:\ (E:\MediaServer\mount-torbox.ps1 via interactive task MediaServer_TorboxMount)
 
-  Ordered start chain with health gates (abort on first failure, explicit log):
+  Ordered start chain with health gates (abort on hard failure; defer
+  Session-1-only dependencies until interactive logon, explicit log):
     gdrive (Test-Path F:\Media)
-      -> torboxmount (Test-Path T:\ else start mount-torbox.ps1)
+      -> torboxmount (headless authority: live rclone 'mount torbox' process + RC http://127.0.0.1:5572/rc/noop; T:\ Test-Path is session-scoped and never a Session-0 failure criterion)
       -> proxy  (wait http://127.0.0.1:8888/health  30s)
       -> bridge (wait http://127.0.0.1:18099/health 10s, requires proxy OK)
       -> jellyfin (http://127.0.0.1:8096/System/Info/Public)
       -> panel  (http://127.0.0.1:18080/health)
 
-  Watchdog: every 15s -> http_probe + Test-Path + PID-alive; restart with backoff
-  (3x fast, then 60s cooldown). Log: F:\Jellyfin\logs\supervisor.log
+  Watchdog: every 15s -> http_probe + path/process checks + PID-alive; restart
+  with backoff (3x fast, then 60s cooldown). Pre-logon TorBox/bridge failures
+  are deferred quietly. Log: F:\Jellyfin\logs\supervisor.log
 
   Dedupe: keep the LISTENING pid for 8888/18099 (same idea as control_panel.py
   dedupe_proxy); kill zombie bridge parent holding no port.
@@ -85,6 +87,9 @@ $JellyfinFfmpeg   = 'F:\Jellyfin\server\ffmpeg.exe'
 
 $GdrivePath       = 'F:\Media'
 $TorboxPath       = 'T:\'
+$TorboxRcNoop     = 'http://127.0.0.1:5572/rc/noop'
+$TorboxMountTaskName = 'MediaServer_TorboxMount'
+$TorboxMountWaitSeconds = 120
 $ProxyHealth      = 'http://127.0.0.1:8888/health'
 $BridgeHealth     = 'http://127.0.0.1:18099/health'
 $JellyfinHealth   = 'http://127.0.0.1:8096/System/Info/Public'
@@ -102,6 +107,8 @@ $SvcList = @('gdrive', 'torboxmount', 'proxy', 'bridge', 'jellyfin', 'panel')
 # backoff state: 3x fast restart, then 60s cooldown
 $script:FailCount   = @{ gdrive = 0; torboxmount = 0; proxy = 0; bridge = 0; jellyfin = 0; panel = 0 }
 $script:LastRestart = @{ gdrive = [datetime]::MinValue; torboxmount = [datetime]::MinValue; proxy = [datetime]::MinValue; bridge = [datetime]::MinValue; jellyfin = [datetime]::MinValue; panel = [datetime]::MinValue }
+$script:DeferredState  = @{ torboxmount = $false; bridge = $false }
+$script:DeferredLogged = @{ torboxmount = $false; bridge = $false }
 
 # dupe forensics: per-parent counter for non-listening bridge/proxy dupes (memory-only, surfaced via FORENSICS log lines)
 $script:DupeParentCount = @{}
@@ -214,6 +221,69 @@ function Wait-PathHealthy {
     Start-Sleep -Seconds 1
   }
   return (Test-Path -LiteralPath $LiteralPath)
+}
+
+function Test-TorboxRcHealthy {
+  # Headless RC authority for the TorBox mount (loopback is session-independent,
+  # unlike the T:\ drive letter). POST-only endpoint; no secrets (rc-no-auth loopback).
+  param([int]$TimeoutSec = 5)
+  try {
+    $r = Invoke-WebRequest -Uri $TorboxRcNoop -Method Post -TimeoutSec $TimeoutSec -UseBasicParsing -ErrorAction Stop
+    if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400) { return $true }
+    return $false
+  } catch {
+    return $false
+  }
+}
+
+function Get-TorboxMountProcess {
+  # Live matching rclone mount processes (visible across sessions via CIM).
+  return @(Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox')
+}
+
+function Test-TorboxMountTaskExists {
+  try {
+    $t = Get-ScheduledTask -TaskName $TorboxMountTaskName -ErrorAction Stop
+    return ($null -ne $t)
+  } catch {
+    return $false
+  }
+}
+
+function Test-InteractiveSessionAvailable {
+  # True when an interactive user session exists to host Session-1 interactive services.
+  # Primary signal: explorer.exe outside Session 0.
+  # Secondary signal: qwinsta reporting a strictly Active session with a non-zero session ID.
+  # (Never match disconnected console or Session 0 services).
+  try {
+    $exp = Get-Process -Name 'explorer' -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -ne 0 }
+    if ($exp) { return $true }
+  } catch { }
+  try {
+    $lines = qwinsta 2>$null
+    foreach ($ln in $lines) {
+      $t = "$ln".Trim()
+      if ($t -match '^(?:>)?\s*\S+\s+(?:\S+\s+)?(\d+)\s+Active\b') {
+        $sessId = [int]$Matches[1]
+        if ($sessId -gt 0) { return $true }
+      }
+    }
+  } catch { }
+  return $false
+}
+
+function Wait-TorboxMountReady {
+  # Wait for headless authority: matching rclone process + RC noop. T:\ visibility
+  # is reported only as informational (session-scoped from Session 0).
+  param([int]$TimeoutSec = 120)
+  $deadline = (Get-Date).AddSeconds($TimeoutSec)
+  while ((Get-Date) -lt $deadline) {
+    $procs = Get-TorboxMountProcess
+    if ($procs.Count -gt 0 -and (Test-TorboxRcHealthy -TimeoutSec 3)) { return $true }
+    Start-Sleep -Seconds 2
+  }
+  $procs = Get-TorboxMountProcess
+  return (($procs.Count -gt 0) -and (Test-TorboxRcHealthy -TimeoutSec 3))
 }
 
 # ---------------------------------------------------------------- netstat / CIM helpers
@@ -416,7 +486,13 @@ function Test-GdriveHealthy {
 }
 
 function Test-TorboxMountHealthy {
-  if (-not (Test-Path -LiteralPath $TorboxPath)) { return $false }
+  # Headless authority (Session-0 safe): BOTH a live matching rclone process AND
+  # a successful RC noop probe. Test-Path T:\ is session-scoped (Session-1 drive
+  # letters are invisible from Session 0 even via --network-mode) and MUST NOT be
+  # a failure criterion here. Callers log visibility only as informational.
+  $procs = Get-TorboxMountProcess
+  if ($procs.Count -eq 0) { return $false }
+  if (-not (Test-TorboxRcHealthy -TimeoutSec 3)) { return $false }
   return $true
 }
 
@@ -465,44 +541,65 @@ function Start-Gdrive {
 }
 
 function Start-TorboxMount {
-  if (Test-TorboxMountHealthy) {
-    Write-SupLog 'GATE torboxmount: OK (T:\ present).'
-    $rcloneT = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox'
-    if ($rcloneT.Count -gt 0) { Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT[0].ProcessId }
+  # SYSTEM Session-0 gate. Headless authority is process + RC only. NEVER uses
+  # Test-Path T:\ as a failure criterion and NEVER spawns mount-torbox.ps1 via
+  # Start-Process (that would run headless in Session 0 and risk the live
+  # Session-1 mount). Delegation is schtasks /Run on the interactive task only,
+  # throttled by the existing watchdog backoff (no Run-storm). Never kills any
+  # other-session rclone.
+  $rcloneT = Get-TorboxMountProcess
+  $rcOk = Test-TorboxRcHealthy -TimeoutSec 5
+  $pathVisible = $false
+  try { $pathVisible = Test-Path -LiteralPath $TorboxPath } catch { $pathVisible = $false }
+  if ($rcloneT.Count -gt 0 -and $rcOk) {
+    Write-SupLog ("GATE torboxmount: OK (rclone PID " + $rcloneT[0].ProcessId + " + RC :5572 OK; T:\ visible=" + $pathVisible + "; T:\ visibility is session-scoped, Session-0 Test-Path not authoritative).")
+    Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT[0].ProcessId
+    $script:DeferredState['torboxmount'] = $false
+    $script:DeferredLogged['torboxmount'] = $false
     return $true
   }
-  if (-not (Test-Path -LiteralPath $TorboxMountScript)) {
-    Write-SupLog "GATE torboxmount: FAILED (T:\ missing and mount script not found: $TorboxMountScript)." 'ERROR'
-    return $false
+  $procInfo = if ($rcloneT.Count -gt 0) { ("rclone PID " + $rcloneT[0].ProcessId + " present but RC unhealthy") } else { 'no matching rclone process' }
+  if (-not (Test-TorboxMountTaskExists)) {
+    Write-SupLog ("GATE torboxmount: DEFER (" + $procInfo + ", RC ok=" + $rcOk + "; interactive task " + $TorboxMountTaskName + " not found; not spawning from SYSTEM Session-0; leaving other-session rclone untouched).") 'WARN'
+    $script:DeferredState['torboxmount'] = $true
+    return 'deferred'
   }
-  Write-SupLog 'GATE torboxmount: T:\ missing; starting E:\MediaServer\mount-torbox.ps1.' 'WARN'
-  $rcloneT = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox'
-  if ($rcloneT.Count -gt 0) {
-    # A mount process is already alive but T:\ is not visible yet (slow WinFsp
-    # init or transient flap). Spawning a second mount on the same drive letter
-    # + RC port hard-kills the live instance — wait for it instead (2026-09-05).
-    Write-SupLog ("GATE torboxmount: rclone already alive (PID " + $rcloneT[0].ProcessId + "); waiting up to 120s for T:\ instead of spawning a duplicate.") 'WARN'
-    if (Wait-PathHealthy -LiteralPath $TorboxPath -TimeoutSec 120) {
-      Write-SupLog 'GATE torboxmount: OK after wait (T:\ present, no duplicate spawned).'
-      Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT[0].ProcessId
-      return $true
+  if (-not (Test-InteractiveSessionAvailable)) {
+    if (-not $script:DeferredLogged['torboxmount']) {
+      Write-SupLog ("GATE torboxmount: DEFER (" + $procInfo + ", RC ok=" + $rcOk + "; no interactive user session active; deferred until user logon).") 'INFO'
+      $script:DeferredLogged['torboxmount'] = $true
     }
-    Write-SupLog 'GATE torboxmount: FAILED (live rclone never produced T:\ in 120s).' 'ERROR'
-    return $false
+    $script:DeferredState['torboxmount'] = $true
+    return 'deferred'
   }
+  $script:DeferredState['torboxmount'] = $false
+  $script:DeferredLogged['torboxmount'] = $false
+  Write-SupLog ("GATE torboxmount: " + $procInfo + ", RC ok=" + $rcOk + "; delegating to interactive task " + $TorboxMountTaskName + " via schtasks /Run (never Start-Process from SYSTEM).") 'WARN'
   try {
-    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"' + $TorboxMountScript + '"')) -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
+    $schOut = & schtasks /Run /TN $TorboxMountTaskName 2>&1 | Out-String
+    $schExit = $LASTEXITCODE
+    $schFlat = ($schOut -replace '\s+', ' ').Trim()
+    Write-SupLog ("GATE torboxmount: schtasks /Run exit={0} out={1}." -f $schExit, $schFlat)
+    if ($schExit -ne 0) {
+      Write-SupLog ("GATE torboxmount: ERROR schtasks /Run failed (exit={0}); will retry via watchdog backoff, no duplicate spawn." -f $schExit) 'ERROR'
+      return $false
+    }
   } catch {
-    Write-SupLog ("GATE torboxmount: FAILED to launch mount script: " + $_.Exception.Message) 'ERROR'
+    Write-SupLog ("GATE torboxmount: ERROR schtasks /Run exception: " + $_.Exception.Message) 'ERROR'
     return $false
   }
-  if (Wait-PathHealthy -LiteralPath $TorboxPath -TimeoutSec $MountWaitSeconds) {
-    Write-SupLog 'GATE torboxmount: OK after mount-torbox.ps1 (T:\ present).'
-    $rcloneT = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox'
-    if ($rcloneT.Count -gt 0) { Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT[0].ProcessId }
+  Write-SupLog ("GATE torboxmount: WAIT up to " + $TorboxMountWaitSeconds + "s for matching rclone + RC :5572 (watchdog backoff throttles repeat Runs).") 'WARN'
+  if (Wait-TorboxMountReady -TimeoutSec $TorboxMountWaitSeconds) {
+    $rcloneT2 = Get-TorboxMountProcess
+    $pv2 = $false
+    try { $pv2 = Test-Path -LiteralPath $TorboxPath } catch { $pv2 = $false }
+    Write-SupLog ("GATE torboxmount: OK after " + $TorboxMountTaskName + " (rclone PID " + $rcloneT2[0].ProcessId + " + RC :5572 OK; T:\ visible=" + $pv2 + " session-scoped).")
+    Write-PidFile -Svc 'torboxmount' -PidValue $rcloneT2[0].ProcessId
+    $script:DeferredState['torboxmount'] = $false
+    $script:DeferredLogged['torboxmount'] = $false
     return $true
   }
-  Write-SupLog 'GATE torboxmount: FAILED (T:\ still missing after mount-torbox.ps1).' 'ERROR'
+  Write-SupLog ("GATE torboxmount: FAILED (no healthy rclone + RC :5572 within " + $TorboxMountWaitSeconds + "s after schtasks /Run; DEFER to watchdog backoff).") 'ERROR'
   return $false
 }
 
@@ -555,6 +652,14 @@ function Start-Bridge {
   }
   Write-SupLog 'GATE bridge: [1/7] initial health check (http://127.0.0.1:18099/health, proxy OK).'
   $preOk = Test-BridgeHealthy
+  if (-not $preOk -and -not (Test-InteractiveSessionAvailable)) {
+    if (-not $script:DeferredLogged['bridge']) {
+      Write-SupLog 'GATE bridge: DEFER (requires Session-1 interactive token; no active user session; deferred until user logon).' 'INFO'
+      $script:DeferredLogged['bridge'] = $true
+    }
+    $script:DeferredState['bridge'] = $true
+    return 'deferred'
+  }
   Write-SupLog ("GATE bridge: [2/7] pre-start dedupe (keep LISTENING pid on 127.0.0.1:18099; initial check healthy={0})." -f $preOk)
   Invoke-DedupePortService -Svc 'bridge' -CmdRegex 'potplayer_http_bridge\.py' -Port 18099 | Out-Null
   Write-SupLog 'GATE bridge: [3/7] re-probe (transient-tolerant); start ONLY if still failing.'
@@ -562,8 +667,12 @@ function Start-Bridge {
     Write-SupLog 'GATE bridge: OK (re-probe healthy, proxy OK; no start needed).'
     $lp = Get-ListeningPid -Port 18099
     if ($lp -gt 0) { Write-PidFile -Svc 'bridge' -PidValue $lp }
+    $script:DeferredState['bridge'] = $false
+    $script:DeferredLogged['bridge'] = $false
     return $true
   }
+  $script:DeferredState['bridge'] = $false
+  $script:DeferredLogged['bridge'] = $false
   if (-not (Test-Path -LiteralPath $PythonW)) {
     Write-SupLog "GATE bridge: FAILED (pythonw missing: $PythonW)." 'ERROR'
     return $false
@@ -595,6 +704,8 @@ function Start-Bridge {
   if ($waitOk -and (Test-BridgeHealthy) -and ($lp2 -gt 0)) {
     Write-SupLog ("GATE bridge: OK after start (health 18099, LISTENING PID {0})." -f $lp2)
     Write-PidFile -Svc 'bridge' -PidValue $lp2
+    $script:DeferredState['bridge'] = $false
+    $script:DeferredLogged['bridge'] = $false
     return $true
   }
   Write-SupLog 'GATE bridge: FAILED (http://127.0.0.1:18099/health not OK within 10s, or no LISTENING pid).' 'ERROR'
@@ -675,7 +786,7 @@ function Start-OrderedStack {
     return $false
   }
   if (-not (Start-TorboxMount)) {
-    Write-SupLog 'ABORT: ordered start chain halted at torboxmount (T:\ not available). Downstream services NOT started.' 'ERROR'
+    Write-SupLog 'ABORT: ordered start chain halted at torboxmount (no live rclone mount torbox + RC :5572; delegated/deferred, downstream NOT started).' 'ERROR'
     return $false
   }
   if (-not (Start-Proxy)) {
@@ -769,7 +880,7 @@ function Get-StackStatus {
   $tPid = Read-PidFile -Svc 'torboxmount'
   $tProcs = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox'
   $tPids = ($tProcs | ForEach-Object { $_.ProcessId }) -join ','
-  $rows += [PSCustomObject]@{ Service = 'torboxmount'; Check = 'Test-Path T:\'; PathOk = (Test-Path -LiteralPath $TorboxPath); PidFile = $tPid; PidAlive = (Test-PidAlive -PidValue $tPid -MatchPattern 'mount torbox'); Procs = $tPids; ListenPid = '-'; Healthy = (Test-TorboxMountHealthy) }
+  $rows += [PSCustomObject]@{ Service = 'torboxmount'; Check = 'rclone mount torbox + RC :5572 (T:\ session-scoped)'; PathOk = (Test-Path -LiteralPath $TorboxPath); PidFile = $tPid; PidAlive = (Test-PidAlive -PidValue $tPid -MatchPattern 'mount torbox'); Procs = $tPids; ListenPid = '-'; Healthy = (Test-TorboxMountHealthy) }
   # proxy
   $pPid = Read-PidFile -Svc 'proxy'
   $pProcs = Get-MatchingProcesses -NameRegex '^(python|pythonw)\.exe$' -CmdRegex 'torbox-proxy\.py'
@@ -894,6 +1005,7 @@ function Restart-OneService {
 function Invoke-WatchdogOnce {
   # Dedupe first so duplicate listeners do not look like healthy redundancy.
   Invoke-DedupeAll | Out-Null
+  $interactiveAvailable = Test-InteractiveSessionAvailable
   foreach ($svc in $SvcList) {
     $healthy = Test-ServiceHealthy -Svc $svc
     # PID-alive is a secondary signal: if the pid file points at a dead/reused
@@ -922,6 +1034,20 @@ function Invoke-WatchdogOnce {
           $t = Get-MatchingProcesses -NameRegex '^rclone\.exe$' -CmdRegex 'mount torbox' | Select-Object -First 1
           if ($t) { Write-PidFile -Svc 'torboxmount' -PidValue $t.ProcessId }
         }
+      }
+      continue
+    }
+
+    # TorBox and the PotPlayer bridge require Session 1. Once ordered startup
+    # has recorded a defer, stay quiet until logon instead of retrying every
+    # watchdog tick in Session 0. The next interactive tick starts normally.
+    if (($svc -eq 'torboxmount' -or $svc -eq 'bridge') -and -not $interactiveAvailable) {
+      if (-not $script:DeferredState[$svc]) {
+        if (-not $script:DeferredLogged[$svc]) {
+          Write-SupLog ("WATCHDOG ${svc}: DEFER (no active user session; deferred until user logon).") 'INFO'
+          $script:DeferredLogged[$svc] = $true
+        }
+        $script:DeferredState[$svc] = $true
       }
       continue
     }
