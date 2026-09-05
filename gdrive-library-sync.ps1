@@ -55,6 +55,7 @@ $script:ListingBaseDelaySeconds = 2
 $script:CircuitBreakerThreshold = 5
 $script:CircuitBreakerPauseMinutes = 15
 $script:StaleThresholdHours = 24
+$script:StaleWarnSuppressHours = 6
 $script:MaxDurationHistory = 20
 $script:HeartbeatLog = Join-Path $script:BaseDir 'logs\gdrive-library-sync.heartbeat.log'
 
@@ -280,6 +281,7 @@ function New-EmptyState {
         ConsecutiveFailures = 0
         CircuitBreakerUntil = ''
         LastChangeUtc = ''
+        LastStaleWarnUtc = ''
         SyncDurationHistory = @()
         TotalCycles = 0
         LastCycleSeconds = 0
@@ -298,6 +300,7 @@ function Load-State {
         if ($null -eq $state.PSObject.Properties['ConsecutiveFailures']) { $state | Add-Member -NotePropertyName ConsecutiveFailures -NotePropertyValue 0 }
         if ($null -eq $state.PSObject.Properties['CircuitBreakerUntil']) { $state | Add-Member -NotePropertyName CircuitBreakerUntil -NotePropertyValue '' }
         if ($null -eq $state.PSObject.Properties['LastChangeUtc']) { $state | Add-Member -NotePropertyName LastChangeUtc -NotePropertyValue '' }
+        if ($null -eq $state.PSObject.Properties['LastStaleWarnUtc']) { $state | Add-Member -NotePropertyName LastStaleWarnUtc -NotePropertyValue '' }
         if ($null -eq $state.PSObject.Properties['SyncDurationHistory']) { $state | Add-Member -NotePropertyName SyncDurationHistory -NotePropertyValue @() }
         if ($null -eq $state.PSObject.Properties['TotalCycles']) { $state | Add-Member -NotePropertyName TotalCycles -NotePropertyValue 0 }
         if ($null -eq $state.PSObject.Properties['LastCycleSeconds']) { $state | Add-Member -NotePropertyName LastCycleSeconds -NotePropertyValue 0 }
@@ -320,18 +323,43 @@ function Save-State {
     Move-Item -LiteralPath $temporary -Destination $script:StateFile -Force
 }
 
+function ConvertTo-UtcDateTime {
+    param($Value)
+
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [DateTime]) {
+        if ($Value.Kind -eq [System.DateTimeKind]::Utc) { return $Value }
+        if ($Value.Kind -eq [System.DateTimeKind]::Local) { return $Value.ToUniversalTime() }
+        return [DateTime]::SpecifyKind($Value, [System.DateTimeKind]::Utc)
+    }
+    if ($Value -is [DateTimeOffset]) {
+        return $Value.UtcDateTime
+    }
+    $str = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($str)) { return $null }
+    try {
+        $parsed = [DateTime]::MinValue
+        if ([DateTime]::TryParse($str, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) {
+            if ($parsed.Kind -eq [System.DateTimeKind]::Utc) { return $parsed }
+            return $parsed.ToUniversalTime()
+        }
+        $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        if ([DateTime]::TryParse($str, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+            if ($parsed.Kind -eq [System.DateTimeKind]::Utc) { return $parsed }
+            return $parsed.ToUniversalTime()
+        }
+    } catch {}
+    return $null
+}
+
 function Test-CircuitBreakerOpen {
     param([Parameter(Mandatory)]$State)
 
-    $raw = [string]$State.CircuitBreakerUntil
-    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
-    try {
-        $until = [DateTime]::Parse($raw).ToUniversalTime()
-    } catch {
-        return $false
-    }
+    $until = ConvertTo-UtcDateTime $State.CircuitBreakerUntil
+    if ($null -eq $until) { return $false }
     if ([DateTime]::UtcNow -lt $until) {
         $remaining = [Math]::Ceiling(($until - [DateTime]::UtcNow).TotalMinutes)
+        $raw = $until.ToString('o')
         Write-SyncLog "Circuit breaker OPEN (failures=$($State.ConsecutiveFailures)); pausing until $raw (~${remaining}m remaining). Skipping cycle." 'WARN'
         return $true
     }
@@ -406,16 +434,36 @@ function Write-HeartbeatLog {
 function Test-StaleThreshold {
     param([Parameter(Mandatory)]$State)
 
-    $raw = [string]$State.LastChangeUtc
-    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
-    try {
-        $lastChange = [DateTime]::Parse($raw).ToUniversalTime()
-    } catch {
-        return $false
+    $lastChange = $null
+    if ($null -ne $State.PSObject.Properties['LastChangeUtc']) {
+        $lastChange = ConvertTo-UtcDateTime $State.LastChangeUtc
     }
+    if ($null -eq $lastChange) { return $false }
+
     $hours = ([DateTime]::UtcNow - $lastChange).TotalHours
     if ($hours -ge $script:StaleThresholdHours) {
+        $lastWarn = $null
+        if ($null -ne $State.PSObject.Properties['LastStaleWarnUtc']) {
+            $lastWarn = ConvertTo-UtcDateTime $State.LastStaleWarnUtc
+        }
+        if ($null -ne $lastWarn) {
+            if ($lastChange -le $lastWarn) {
+                if (([DateTime]::UtcNow - $lastWarn).TotalHours -lt $script:StaleWarnSuppressHours) {
+                    return $true
+                }
+            }
+        }
+        $raw = [string]$State.LastChangeUtc
         Write-SyncLog "STALE WARNING: no library change observed in $([Math]::Round($hours, 1))h (threshold $($script:StaleThresholdHours)h, lastChange=$raw)." 'WARN'
+        try {
+            $nowStamp = [DateTime]::UtcNow.ToString('o')
+            if ($null -eq $State.PSObject.Properties['LastStaleWarnUtc']) {
+                $State | Add-Member -NotePropertyName LastStaleWarnUtc -NotePropertyValue $nowStamp
+            } else {
+                $State.LastStaleWarnUtc = $nowStamp
+            }
+            try { Save-State $State } catch {}
+        } catch {}
         return $true
     }
     return $false
@@ -800,6 +848,7 @@ function Invoke-SyncCycle {
             $state.PendingSignature = $snapshot.Signature
             $state.LastObservedSignature = $snapshot.Signature
             $state.LastChangeUtc = [DateTime]::UtcNow.ToString('o')
+            $state.LastStaleWarnUtc = ''
             $state.Files = @($snapshot.Files)
             $state.LastRefreshStatus = 'pending'
             Save-State $state
