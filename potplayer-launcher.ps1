@@ -16,22 +16,37 @@ public static class PotFgFix {
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
 }
 '@ -ErrorAction SilentlyContinue
-$script:PotFgTried = $false
+$global:WL_PotFgTried = $false
 function Restore-PotPlayerForeground {
     # Best-effort only: never throws, never blocks launch.
+    # Session-aware: only own session (Session-0 bridge must never steal/foreground sess-1 playback).
     try {
-        if ($script:PotFgTried) { return }
-        $script:PotFgTried = $true
+        if ($global:WL_PotFgTried) { return }
+        $global:WL_PotFgTried = $true
         Start-Sleep -Milliseconds 1500
-        $p = Get-Process -Name 'PotPlayerMini64','PotPlayer64','PotPlayer' -ErrorAction SilentlyContinue |
-             Sort-Object StartTime -Descending | Select-Object -First 1
+        $mySess = 1
+        try { $mySess = (Get-Process -Id $PID -ErrorAction Stop).SessionId } catch {}
+        function Get-PotFgCandidate {
+            try {
+                $cands = @(Get-Process -Name 'PotPlayerMini64','PotPlayer64','PotPlayer' -ErrorAction SilentlyContinue | Where-Object {
+                    try { $_.SessionId -eq $mySess } catch { $false }
+                })
+                if ($cands.Count -eq 0) { return $null }
+                # Order by handle-validity (non-zero MainWindowHandle, process alive); never sort by StartTime (may throw).
+                $withH = @($cands | Where-Object { try { ($_.MainWindowHandle -ne 0) -and (-not $_.HasExited) } catch { $false } })
+                if ($withH.Count -gt 0) { return $withH[0] }
+                return $cands[0]
+            } catch { return $null }
+        }
+        $p = Get-PotFgCandidate
         if (-not $p) { Write-BridgeLog 'FOREGROUND: no PotPlayer process found after launch.'; return }
-        $h = [IntPtr]$p.MainWindowHandle
+        try { $h = [IntPtr]$p.MainWindowHandle } catch { $h = [IntPtr]::Zero }
         $tries = 0
         while (($h -eq [IntPtr]::Zero) -and ($tries -lt 10)) {
             Start-Sleep -Milliseconds 500
-            try { $p.Refresh() } catch {}
-            $h = [IntPtr]$p.MainWindowHandle
+            $p = Get-PotFgCandidate
+            if (-not $p) { break }
+            try { $h = [IntPtr]$p.MainWindowHandle } catch { $h = [IntPtr]::Zero }
             $tries++
         }
         if ($h -eq [IntPtr]::Zero) {

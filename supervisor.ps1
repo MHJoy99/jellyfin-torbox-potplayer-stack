@@ -572,13 +572,20 @@ function Start-Bridge {
     Write-SupLog "GATE bridge: FAILED (script missing: $BridgeScript)." 'ERROR'
     return $false
   }
-  Write-SupLog 'GATE bridge: [4/7] still failing after re-probe; starting pythonw potplayer_http_bridge.py (proxy OK).' 'WARN'
+  Write-SupLog 'GATE bridge: [4/7] still failing after re-probe; starting via scheduled task MediaServer_PotPlayerBridge (Session-1 interactive, proxy OK).' 'WARN'
   try {
-    $p = Start-Process -FilePath $PythonW -ArgumentList @('"' + $BridgeScript + '"') -WorkingDirectory $BridgeWorkDir -WindowStyle Hidden -PassThru -ErrorAction Stop
-    Write-PidFile -Svc 'bridge' -PidValue $p.Id
-    Write-SupLog ("GATE bridge: launched PID {0}; [5/7] waiting for health up to {1}s." -f $p.Id, $BridgeWaitSeconds)
+    # Session-1 placement: NEVER Start-Process pythonw here (Session-0 poison). Task runs as mhjoygamershub\Administrator Interactive.
+    $schOut = & schtasks /Run /TN MediaServer_PotPlayerBridge 2>&1 | Out-String
+    $schExit = $LASTEXITCODE
+    $schFlat = ($schOut -replace '\s+', ' ').Trim()
+    Write-SupLog ("GATE bridge: schtasks /Run exit={0} out={1}." -f $schExit, $schFlat)
+    if ($schExit -ne 0) {
+      Write-SupLog ("GATE bridge: FAILED schtasks /Run (exit={0}); NOT falling back to Start-Process." -f $schExit) 'ERROR'
+      return $false
+    }
+    Write-SupLog ("GATE bridge: task start requested; [5/7] waiting for health up to {0}s." -f $BridgeWaitSeconds)
   } catch {
-    Write-SupLog ("GATE bridge: FAILED to launch: " + $_.Exception.Message) 'ERROR'
+    Write-SupLog ("GATE bridge: FAILED to launch via task: " + $_.Exception.Message) 'ERROR'
     return $false
   }
   $waitOk = Wait-HttpHealthy -Url $BridgeHealth -TimeoutSec $BridgeWaitSeconds -Label 'bridge'
