@@ -90,6 +90,13 @@ _PREV_REQUESTDL_RATELIMITED: int | None = None
 # TorBox rclone RC for VFS/disk-cache stats (T:\ mount, no auth, POST-only).
 TORBOX_VFS_RC_URL = "http://127.0.0.1:5572/vfs/stats"
 _TORBOX_VFS_TIMEOUT = 3.0
+# TorBox liveness probe (session-safe): POST-only RC noop, no auth, loopback.
+# T:\ drive-letter visibility is session-scoped (Session-0 panel cannot see the
+# Session-1 --network-mode mount), so process + RC is authoritative everywhere.
+# Other panel checks are session-independent: Jellyfin/proxy/bridge use HTTP on
+# 127.0.0.1, and the Google Drive check uses F:\Media on a local disk.
+TORBOX_RC_NOOP_URL = "http://127.0.0.1:5572/rc/noop"
+_TORBOX_RC_TIMEOUT = 2.0
 
 SERVER_DIR = BASE_DIR / "server"
 JELLYFIN_EXE = SERVER_DIR / "jellyfin.exe"
@@ -408,7 +415,42 @@ def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = Fal
         matched = processes.get(key, [])
         is_mount = config.get("kind") == "mount"
         probe = {"ok": False, "code": 0, "body": ""}
-        if is_mount:
+        if key == "torboxmount":
+            # Session-safe contract: RC noop proves the Session-1 rclone mount
+            # is alive even when T:\ is invisible from Session 0. Drive-letter
+            # visibility is informational only and never a failure criterion.
+            rc_ok = False if light else _torbox_rc_healthy()
+            if light:
+                try:
+                    rc_ok = _torbox_rc_healthy(timeout=1.0)
+                except Exception:
+                    rc_ok = False
+            path_visible = _torbox_path_visible()
+            probe = {"ok": rc_ok, "code": 200 if rc_ok else 0, "body": ""}
+            if rc_ok:
+                state = "healthy"
+                state_label = "Healthy"
+                if matched:
+                    detail = (
+                        f"Serving {config['mount_path']} "
+                        f"(rclone PID {matched[0].get('pid')} + RC :5572 OK; "
+                        f"path visible={path_visible})"
+                    )
+                else:
+                    detail = (
+                        f"Serving {config['mount_path']} "
+                        f"(RC :5572 OK; path visible={path_visible}; "
+                        "process scan warming up)"
+                    )
+            elif matched:
+                state = "starting"
+                state_label = "Starting"
+                detail = "rclone process present; waiting for RC :5572"
+            else:
+                state = "stopped"
+                state_label = "Stopped"
+                detail = f"{config['mount_path']} is not mounted (no rclone process, RC :5572 down)"
+        elif is_mount:
             path_ok = os.path.isdir(config["mount_path"])
             alias_ok = bool(config.get("alias_path")) and os.path.isdir(config["alias_path"])
             if path_ok and matched:
@@ -466,6 +508,9 @@ def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = Fal
             "pids": [row["pid"] for row in matched if row.get("pid")],
             "last_code": probe["code"],
         }
+        if key == "torboxmount":
+            item["rc_ok"] = bool(probe.get("ok"))
+            item["path_visible"] = _torbox_path_visible()
         if key == "bridge":
             item["player"] = bridge_player_status() if healthy else {"running": False, "process": None}
         if key == "jellyfin" and healthy:
@@ -854,6 +899,37 @@ def _fetch_torbox_vfs(timeout: float = _TORBOX_VFS_TIMEOUT) -> dict[str, Any]:
         return {"bytes_used": bytes_used, "files": files, "dirs": dirs, "age_s": 0}
     except Exception:
         return nulls
+
+
+def _torbox_rc_healthy(timeout: float = _TORBOX_RC_TIMEOUT) -> bool:
+    """Session-safe TorBox liveness: POST-only RC noop proves rclone is alive.
+
+    Works identically from Session 0 and Session 1 because it uses TCP
+    loopback instead of the session-scoped T:\\ drive letter.
+    """
+    try:
+        body = json.dumps({}).encode("utf-8")
+        request = urllib.request.Request(
+            TORBOX_RC_NOOP_URL,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Jellyfin-Control-Panel/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return 200 <= response.status < 400
+    except Exception:
+        return False
+
+
+def _torbox_path_visible() -> bool:
+    """T:\\ visibility is informational only (False in Session 0 is normal)."""
+    try:
+        return os.path.isdir("T:\\")
+    except Exception:
+        return False
 
 
 def _format_cache_bytes(value: Any) -> str | None:
@@ -1830,8 +1906,9 @@ def _check_admin_rate_limit(handler: BaseHTTPRequestHandler) -> tuple[bool, int]
 def health_payload() -> dict[str, Any]:
     """Feature (1): GET /api/health aggregating proxy/bridge/Jellyfin/mount T:.
 
-    Lightweight: one short HTTP probe per TCP service + os.path.isdir for
-    the T:\\ mount. Never raises; degrades to stopped/unknown on failure.
+    Lightweight: one short HTTP probe per TCP service + RC noop for the
+    TorBox mount (T:\\ visibility is session-scoped and informational only).
+    Never raises; degrades to stopped/unknown on failure.
     """
     services: dict[str, dict[str, Any]] = {}
     try:
@@ -1882,17 +1959,27 @@ def health_payload() -> dict[str, Any]:
             pass
     services["jellyfin"] = jelly_entry
     try:
-        mount_ok = os.path.isdir("T:\\")
+        mount_rc_ok = _torbox_rc_healthy(timeout=1.5)
     except Exception:
-        mount_ok = False
+        mount_rc_ok = False
+    try:
+        mount_path_visible = os.path.isdir("T:\\")
+    except Exception:
+        mount_path_visible = False
     services["torboxmount"] = {
         "id": "torboxmount",
         "name": "TorBox Mount",
         "port": None,
         "mount_path": "T:\\",
-        "ok": bool(mount_ok),
-        "state": "healthy" if mount_ok else "stopped",
-        "detail": "T:\\ is mounted" if mount_ok else "T:\\ is not mounted",
+        "ok": bool(mount_rc_ok),
+        "state": "healthy" if mount_rc_ok else "stopped",
+        "detail": (
+            f"T:\\ serving (RC :5572 OK; path visible={mount_path_visible})"
+            if mount_rc_ok
+            else "T:\\ is not mounted (RC :5572 down)"
+        ),
+        "rc_ok": bool(mount_rc_ok),
+        "path_visible": bool(mount_path_visible),
     }
     overall = "healthy" if all(str(v.get("state")) == "healthy" for v in services.values()) else "degraded"
     return {
