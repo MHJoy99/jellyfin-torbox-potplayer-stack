@@ -786,7 +786,7 @@ function Start-OrderedStack {
     return $false
   }
   if (-not (Start-TorboxMount)) {
-    Write-SupLog 'ABORT: ordered start chain halted at torboxmount (no live rclone mount torbox + RC :5572; delegated/deferred, downstream NOT started).' 'ERROR'
+    Write-SupLog 'ABORT: ordered start chain halted at torboxmount (no healthy rclone mount torbox + RC :5572; downstream NOT started).' 'ERROR'
     return $false
   }
   if (-not (Start-Proxy)) {
@@ -1092,7 +1092,7 @@ function Invoke-WatchdogOnce {
 }
 
 function Start-WatchdogLoop {
-  Write-SupLog ("WATCHDOG: loop every ${WatchdogSeconds}s (http_probe + Test-Path + PID-alive; 3x fast then 60s backoff). Log: $LogFile")
+  Write-SupLog ("WATCHDOG: loop every ${WatchdogSeconds}s (http/path/process probes + PID-alive; 3x fast then 60s backoff; pre-logon TorBox/bridge defer). Log: $LogFile")
   while ($true) {
     try {
       Invoke-WatchdogOnce
