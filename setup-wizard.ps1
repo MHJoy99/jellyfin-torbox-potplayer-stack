@@ -299,8 +299,8 @@ function Test-TorboxKeyOnce {
 function Invoke-TorboxStep {
     Write-Header 'TorBox API key  [3]'
     Show-Progress -Label 'TorBox key'
-    Write-Host 'Paste a TorBox key (input is masked). Choose Machine scope for 24/7' -ForegroundColor White
-    Write-Host 'hosts or User scope for a personal account. 1 verification call only.' -ForegroundColor Gray
+    Write-Host 'Paste your TorBox API key below (typing is hidden for safety).' -ForegroundColor White
+    Write-Host 'Machine scope = always-on host (recommended). User scope = personal account. Only 1 verification call is made.' -ForegroundColor Gray
     if ($NonInteractive) {
         if ([string]::IsNullOrWhiteSpace($env:TORBOX_API_KEY)) {
             Write-Fail 'NonInteractive: $env:TORBOX_API_KEY is required (answers file never holds secrets).'
@@ -315,7 +315,7 @@ function Invoke-TorboxStep {
         return [bool]$verified
     }
     while ($true) {
-        $entered = Read-SecretMasked -Prompt 'TorBox API key (masked, back to return)'
+        $entered = Read-SecretMasked -Prompt 'Paste TorBox API key here (hidden, type back to return to menu)'
         if ($null -eq $entered) { continue }
         $entered = $entered.Trim()
         if (($entered -eq 'q') -or ($entered -eq 'Q')) { return $false }
@@ -333,7 +333,7 @@ function Invoke-TorboxStep {
             Write-Warn 'That key looks too short; please re-paste the full key.'
             continue
         }
-        $choice = Read-PlainValidated -Prompt 'Scope: [1] Machine (default) / [2] User' -Default '1' -AllowEmpty $false `
+        $choice = Read-PlainValidated -Prompt 'TorBox scope: [1] Machine 24/7 host (default) / [2] User personal account' -Default '1' -AllowEmpty $false `
             -Validate { param($v, [ref]$e) if ($v -match '^[12]$|(?i)^(machine|user)$') { return $true }; $e.Value = 'Enter 1/Machine or 2/User.'; return $false }
         if ($choice.Quit) { return $false }
         if ($choice.Back) { return $true }
@@ -374,8 +374,8 @@ function Test-LibraryRootValid {
 function Invoke-LibraryStep {
     Write-Header 'Library roots  [4]'
     Show-Progress -Label 'Library roots'
-    Write-Host 'Libraries are the folders Jellyfin scans (e.g. F:\TorboxMedia).' -ForegroundColor White
-    Write-Host 'Commands: [a]dd  [r]emove  [l]ist  [d]one   (back returns, q quits)' -ForegroundColor Gray
+    Write-Host 'Library folders are what Jellyfin scans for media (example: F:\TorboxMedia).' -ForegroundColor White
+    Write-Host 'Commands: [a]dd a folder  [r]emove a folder  [l]ist folders  [d]one when finished   (back = menu, q = quit)' -ForegroundColor Gray
     if ($NonInteractive) {
         if ($script:State.LibraryRoots.Count -eq 0) { Write-Warn 'NonInteractive: no libraryRoots in answers file.' }
         foreach ($p in $script:State.LibraryRoots) {
@@ -416,7 +416,7 @@ function Invoke-LibraryStep {
         }
         if (($cmd -eq 'l') -or ($cmd -eq 'list')) { continue }
         if (($cmd -eq 'a') -or ($cmd -eq 'add')) {
-            $got = Read-PlainValidated -Prompt 'New library path (e.g. F:\TorboxMedia)' -Default '' -AllowEmpty $false `
+            $got = Read-PlainValidated -Prompt 'Enter new library folder path (example: F:\TorboxMedia)' -Default '' -AllowEmpty $false `
                 -Validate { param($v, [ref]$e) return (Test-LibraryRootValid -Path $v -Err $e) }
             if ($got.Quit) { return $false }
             if ($got.Back) { continue }
@@ -453,7 +453,7 @@ function Invoke-LibraryStep {
 function Invoke-JellyfinStep {
     Write-Header 'Jellyfin connection  [5]'
     Show-Progress -Label 'Jellyfin'
-    Write-Host 'Checks GET {url}/System/Info/Public (no auth needed; token is stored for later).' -ForegroundColor Gray
+    Write-Host 'We test {url}/System/Info/Public (public check, no login needed; your token is saved for later steps).' -ForegroundColor Gray
     if ($NonInteractive) {
         $tok = $env:JELLYFIN_API_KEY
         if (-not [string]::IsNullOrWhiteSpace($tok)) { $script:Secrets.JellyfinToken = $tok.Trim() }
@@ -470,7 +470,7 @@ function Invoke-JellyfinStep {
         Mark-StepDone -Label 'Jellyfin'
         return $true
     }
-    $gotUrl = Read-PlainValidated -Prompt 'Jellyfin server URL' -Default $script:State.JellyfinUrl -AllowEmpty $false `
+    $gotUrl = Read-PlainValidated -Prompt 'Jellyfin server URL (example: http://127.0.0.1:8096)' -Default $script:State.JellyfinUrl -AllowEmpty $false `
         -Validate {
             param($v, [ref]$e)
             $u = $null
@@ -583,7 +583,7 @@ function Find-PotPlayerExe {
 function Invoke-PotPlayerStep {
     Write-Header 'PotPlayer path  [6]'
     Show-Progress -Label 'PotPlayer'
-    Write-Host 'Auto-detects via registry App Paths + DAUM keys + Program Files scan.' -ForegroundColor Gray
+    Write-Host 'We auto-detect PotPlayer via registry + Program Files scan. You can accept a match or paste your own path.' -ForegroundColor Gray
     $cands = @(Find-PotPlayerExe)
     if ($NonInteractive) {
         if (-not [string]::IsNullOrWhiteSpace($script:State.PotPlayerPath) -and (Test-Path -LiteralPath $script:State.PotPlayerPath)) {
@@ -611,7 +611,7 @@ function Invoke-PotPlayerStep {
     if (-not [string]::IsNullOrWhiteSpace($script:State.PotPlayerPath)) {
         Write-Info ('Current selection: {0}' -f $script:State.PotPlayerPath)
     }
-    $got = Read-PlainValidated -Prompt 'Accept current [Enter], pick number, or type full .exe path (back to return)' -Default '' -AllowEmpty $true
+    $got = Read-PlainValidated -Prompt 'Press Enter to keep current, type a list number, or paste full .exe path (back returns to menu)' -Default '' -AllowEmpty $true
     if ($got.Quit) { return $false }
     if ($got.Back) { return $true }
     $v = $got.Value.Trim()
@@ -681,13 +681,13 @@ function Invoke-RcloneStep {
     }
     $script:State.RcloneConf = $cands[0]
     Write-Warn ('rclone.conf NOT found. Expected at: {0}' -f $cands[0])
-    Write-Host '  To create it:' -ForegroundColor White
+    Write-Host '  To create it now:' -ForegroundColor White
     Write-Host '    1. Install rclone (https://rclone.org/downloads/)' -ForegroundColor Gray
     Write-Host ('    2. Run:  rclone --config "{0}" config' -f $cands[0]) -ForegroundColor Gray
-    Write-Host '       Create your remotes (e.g. torbox:, gdrive-media:).' -ForegroundColor Gray
-    Write-Host '    3. Verify: rclone --config "<that path>" lsd <remote>:' -ForegroundColor Gray
-    Write-Host '    4. Re-run this wizard step; presence will turn green.' -ForegroundColor Gray
-    Write-Info 'Wizard continues without rclone.conf; mounts/sync will wait for it.'
+    Write-Host '       Then create your remotes (examples: torbox:, gdrive-media:).' -ForegroundColor Gray
+    Write-Host '    3. Verify it works: rclone --config "<that path>" lsd <remote>:' -ForegroundColor Gray
+    Write-Host '    4. Re-run this wizard step; it will show green once found.' -ForegroundColor Gray
+    Write-Info 'You can continue the wizard without rclone.conf; mounts/sync will wait until it exists.'
     Mark-StepDone -Label 'rclone.conf'
     return $true
 }
@@ -748,8 +748,8 @@ function Invoke-PortStep {
             Write-Warn ('Port {0} IN USE by {1} ({2})' -f $p.Port, $owner, $p.Service)
         }
     }
-    Write-Info 'IN USE is fine when it is YOUR service (Jellyfin/proxy/panel/bridge).'
-    Write-Info 'Investigate only when the occupant is unexpected.'
+    Write-Info 'IN USE is expected when it is your own service (Jellyfin / proxy / panel / bridge).'
+    Write-Info 'Only investigate when the program name looks unfamiliar.'
     $script:StatusFlags.PortsChecked = $true
     Mark-StepDone -Label 'Ports'
     return $true
@@ -806,8 +806,8 @@ function Invoke-HealthCheck {
 function Invoke-PlaybackStep {
     Write-Header 'Playback mode  [9]'
     Show-Progress -Label 'Playback mode'
-    Write-Host 'FullSeason (default): whole season queued in PotPlayer; Single: one item only.' -ForegroundColor Gray
-    Write-Host 'Persisted to $env:POTPLAYER_SINGLE + setup-answers.json (the file).' -ForegroundColor Gray
+    Write-Host 'FullSeason (default): queues the whole season in PotPlayer. Single: plays one episode only.' -ForegroundColor Gray
+    Write-Host 'Saved to $env:POTPLAYER_SINGLE + setup-answers.json for future runs.' -ForegroundColor Gray
     if ($NonInteractive) {
         Write-Info ('NonInteractive: keeping answers playbackMode={0}.' -f $script:State.PlaybackMode)
         Mark-StepDone -Label 'Playback mode'
@@ -815,7 +815,7 @@ function Invoke-PlaybackStep {
     }
     $def = '1'
     if ($script:State.PlaybackMode -eq 'Single') { $def = '2' }
-    $got = Read-PlainValidated -Prompt 'Playback: [1] FullSeason (default) / [2] Single' -Default $def -AllowEmpty $false `
+    $got = Read-PlainValidated -Prompt 'Playback mode: [1] FullSeason whole season (default) / [2] Single one episode' -Default $def -AllowEmpty $false `
         -Validate { param($v, [ref]$e) if ($v -match '^[12]$') { return $true }; $e.Value = 'Enter 1 or 2.'; return $false }
     if ($got.Quit) { return $false }
     if ($got.Back) { return $true }
@@ -829,9 +829,9 @@ function Invoke-PlaybackStep {
 
 #region F10 dry-run summary
 function Show-DryRunSummary {
-    Write-Header 'Dry-run summary — pending changes  [10]'
-    Show-Progress -Label 'Dry-run review'
-    Write-Host 'Nothing has been applied yet. Review, then choose Apply.' -ForegroundColor White
+    Write-Header 'Dry-run preview — review before applying  [10]'
+    Show-Progress -Label 'Dry-run preview'
+    Write-Host 'Nothing has been changed yet. Please review below, then choose Apply when ready.' -ForegroundColor White
     $lines = @()
     $lines += 'ENV (user + process):'
     $lines += '  TORBOX_API_KEY   = <masked, scope={0}> (from your masked entry; never saved to disk)' -f $script:State.TorboxScope
@@ -995,14 +995,14 @@ function Invoke-ApplyStep {
         $anyFail = $true
     }
     Write-Host ''
-    Write-Host 'Apply results (per item):' -ForegroundColor Cyan
+    Write-Host 'Apply results (one line per item):' -ForegroundColor Cyan
     foreach ($r in $results) {
         if ($r.Ok) { Write-Host (('  [ok]   {0}  ({1})' -f $r.Item, $r.Note)) -ForegroundColor Green }
         else { Write-Host (('  [FAIL] {0}  ({1})' -f $r.Item, $r.Note)) -ForegroundColor Red }
     }
     if ($anyFail) {
         Write-Host '' 
-        Write-Host 'Automatic rollback list (apply these to undo this run):' -ForegroundColor Yellow
+        Write-Host 'How to undo this run (rollback steps):' -ForegroundColor Yellow
         # Attempt automatic env restore for values we overwrote.
         try {
             foreach ($k in $oldEnv.Keys) {
@@ -1041,21 +1041,21 @@ function Show-Welcome {
     Write-Host '  Jellyfin + TorBox + PotPlayer — First-Run Setup Wizard' -ForegroundColor Cyan
     Write-Host ('  v{0}   PUBLIC repo (MIT) — secrets are never committed' -f $script:WizardVersion) -ForegroundColor Gray
     Write-Host '============================================================' -ForegroundColor Cyan
-    Write-Host 'This wizard will:' -ForegroundColor White
-    Write-Host '  1. Store your TorBox key + Jellyfin connection (env vars only, never in git).' -ForegroundColor White
-    Write-Host '  2. Set up library folders, PotPlayer path, and playback mode.' -ForegroundColor White
-    Write-Host '  3. Check rclone.conf, ports, and service health for you.' -ForegroundColor White
-    Write-Host '  4. Show every change first (dry-run), then apply with rollback notes.' -ForegroundColor White
-    Write-Host '  5. Save non-secret answers for fast re-runs (-Resume / -NonInteractive).' -ForegroundColor White
+    Write-Host 'This wizard will walk you through setup in a few quick steps:' -ForegroundColor White
+    Write-Host '  1. Save your TorBox key + Jellyfin connection (stored as env vars only, never in git).' -ForegroundColor White
+    Write-Host '  2. Set up your library folders, PotPlayer path, and playback mode.' -ForegroundColor White
+    Write-Host '  3. Check rclone.conf, required ports, and service health for you.' -ForegroundColor White
+    Write-Host '  4. Show a full preview first (dry-run), then apply with rollback notes on failure.' -ForegroundColor White
+    Write-Host '  5. Save non-secret answers so re-runs are fast (-Resume / -NonInteractive).' -ForegroundColor White
     Write-Host ''
-    Write-Host 'Navigate with numbers. Type q any time to quit, back to go back.' -ForegroundColor Gray
+    Write-Host 'Pick a number to open a step. Type q any time to quit, back to return to the menu.' -ForegroundColor Gray
     Write-WizardLog 'Welcome shown.'
 }
 function Show-MainMenu {
     while ($true) {
         Write-Host ''
         Write-Host '================ Setup menu ================' -ForegroundColor Cyan
-        Write-Host ('Progress: {0}/{1} steps done.' -f $script:CompletedSteps, $script:TotalSteps) -ForegroundColor Gray
+        Write-Host ('Progress: {0} of {1} steps complete.' -f $script:CompletedSteps, $script:TotalSteps) -ForegroundColor Gray
         $t1 = 'pending'; if ($script:StatusFlags.TorboxVerified) { $t1 = 'verified' }
         $t2 = 'pending'; if ($script:StatusFlags.JellyfinVerified) { $t2 = 'verified' }
         $t3 = 'pending'; if ($script:StatusFlags.Applied) { $t3 = 'applied' }
@@ -1066,14 +1066,14 @@ function Show-MainMenu {
         Write-Host '  5) rclone.conf check' -ForegroundColor White
         Write-Host '  6) Port check (8888/18099/18080/8096)' -ForegroundColor White
         Write-Host ('  7) Playback mode [{0}]' -f $script:State.PlaybackMode) -ForegroundColor White
-        Write-Host '  8) Dry-run summary (review changes)' -ForegroundColor White
+        Write-Host '  8) Dry-run preview (review before applying)' -ForegroundColor White
         Write-Host ('  9) Apply changes ................. [{0}]' -f $t3) -ForegroundColor White
         Write-Host '  10) Health check' -ForegroundColor White
-        Write-Host '  11) Save answers + open panel + finish' -ForegroundColor White
+        Write-Host '  11) Save answers, open panel, and finish' -ForegroundColor White
         Write-Host '  q) Quit wizard' -ForegroundColor White
-        Write-Host 'Tip: inside any step, type back to return here.' -ForegroundColor Gray
+        Write-Host 'Tip: inside any step, type back to return here, q to quit the wizard.' -ForegroundColor Gray
         $sel = $null
-        try { $sel = Read-Host -Prompt 'Choose [1-11/q]' } catch { Write-Warn 'Input error; showing menu again.'; continue }
+        try { $sel = Read-Host -Prompt 'Enter a number 1-11, or q to quit' } catch { Write-Warn 'Input error; showing menu again.'; continue }
         if ($null -eq $sel) { continue }
         $sel = $sel.Trim()
         if (($sel -eq 'q') -or ($sel -eq 'Q')) { return 'quit' }
@@ -1135,7 +1135,7 @@ function Invoke-OpenPanelOptIn {
         }
         return
     }
-    $got = Read-PlainValidated -Prompt ('Open panel {0} in browser? [y/N]' -f $script:State.PanelUrl) -Default 'N' -AllowEmpty $false `
+    $got = Read-PlainValidated -Prompt ('Open the control panel {0} in your browser now? [y/N]' -f $script:State.PanelUrl) -Default 'N' -AllowEmpty $false `
         -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Enter Y or N.'; return $false }
     if ($got.Quit) { return }
     if ($got.Back) { return }
@@ -1155,7 +1155,7 @@ function Invoke-OpenPanelOptIn {
 function Show-Goodbye {
     Write-Host ''
     Write-Host '============================================================' -ForegroundColor Green
-    Write-Host '  Setup wizard finished. Enjoy your media stack!' -ForegroundColor Green
+    Write-Host '  Setup wizard complete. Your media stack is ready!' -ForegroundColor Green
     Write-Host '============================================================' -ForegroundColor Green
     Write-Host 'Docs:' -ForegroundColor Cyan
     Write-Host '  - README.md         quick start (panel :18080, proxy :8888, Jellyfin :8096)' -ForegroundColor White
@@ -1236,7 +1236,7 @@ function Invoke-WizardMain {
     }
     # Finish path: final dry-run -> confirm -> apply -> health -> browser -> save -> goodbye.
     Show-DryRunSummary
-    $confirm = Read-PlainValidated -Prompt 'Apply these changes now? [Y/n]' -Default 'Y' -AllowEmpty $false `
+    $confirm = Read-PlainValidated -Prompt 'Review above. Apply these changes now? [Y/n]' -Default 'Y' -AllowEmpty $false `
         -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Enter Y or N.'; return $false }
     if ($confirm.Quit) { return 0 }
     if (-not $confirm.Back) {
