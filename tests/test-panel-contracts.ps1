@@ -17,4 +17,30 @@ if ($missing.Count -gt 0) {
     exit 1
 }
 Write-Output ("panel-contracts: {0} ids referenced, all defined" -f @($referenced | Sort-Object -Unique).Count)
+
+# Panel TorBox contract (session-safe): process + RC healthy, path informational.
+# Healthy = rclone 'mount torbox' process + POST-only RC noop on :5572 proves
+# the Session-1 mount is alive even when T:\ is invisible from Session 0.
+# Drive-letter visibility is informational only and never a failure criterion.
+$panelPy = Join-Path $root 'control-panel\control_panel.py'
+if (-not (Test-Path -LiteralPath $panelPy)) { Write-Output 'SKIP: no control-panel/control_panel.py'; exit 0 }
+$py = Get-Content -LiteralPath $panelPy -Raw
+$required = @(
+  'torboxmount',
+  'mount torbox',
+  'TORBOX_RC_NOOP_URL',
+  'rc/noop',
+  '_torbox_rc_healthy',
+  '_torbox_path_visible',
+  'path_visible',
+  'rc_ok',
+  'informational only',
+  ':5572'
+)
+$missingContracts = @($required | Where-Object { $py -notmatch [regex]::Escape($_) })
+if ($missingContracts.Count -gt 0) {
+    Write-Output ("FAIL torbox contract missing: " + ($missingContracts -join ', '))
+    exit 1
+}
+Write-Output ("panel-torbox: all {0} process+RC/path-informational contracts present" -f $required.Count)
 exit 0
