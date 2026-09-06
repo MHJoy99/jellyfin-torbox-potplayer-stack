@@ -9,6 +9,7 @@ This guide explains the protocol handler, the full-season playlist, and how resu
 - [Launcher resolution order](#launcher-resolution-order)
 - [Playlist format](#playlist-format)
 - [Resume with seek](#resume-with-seek)
+- [Playback settings](#playback-settings)
 - [Tracker behavior](#tracker-behavior)
 - [Verify playback](#verify-playback)
 
@@ -154,6 +155,21 @@ Resume is passed as a player `/seek=` argument in seconds, not as a playlist tim
 - Stopping and replaying the same `potplayer://` link re-reads the latest position, so replay always picks up the newest tracker post.
 
 If playback always restarts from zero, confirm the item ID and user ID survived the pipe split and that the tracker is posting, as covered below and in [Jellyfin](jellyfin.md).
+
+## Playback settings
+
+For predictable 4K HDR, multi-channel audio, and smooth progressive streaming, configure PotPlayer with these reference settings:
+
+| Category | Option / Preference | Recommended Value | Reason / Impact |
+| --- | --- | --- | --- |
+| General | Multiple instances | Disable ("Single process only" / `/current`) | Prevents duplicate players from conflicting with sync tracker singletons. |
+| Playback | Auto-load playlist items | Add similar files in folder | Automatically indexes neighboring episodes when opened via direct file. |
+| Video | Video Renderer | Built-in Direct3D 11 Video Renderer | High-performance hardware acceleration with HDR tone mapping support. |
+| Video | Hardware Acceleration (DXVA) | Enabled (D3D11 / D3D9 Copy-Back) | Offloads 4K HEVC/AV1 decode from CPU to GPU. |
+| Audio | Audio Renderer | Default WaveOut or WASAPI Exclusive | Bit-perfect passthrough for Dolby Atmos and DTS-HD tracks. |
+| Subtitles | Subtitle Processing | Built-in S/W Subtitle Renderer | Renders styled ASS/SSA and image-based PGS subtitles without stutter. |
+| Network | Buffer Size | 64 MB (or maximum progressive buffer) | Smoothes playback over TorBox proxy and Google Drive streams. |
+| Launch Flags | CLI switches | `"playlist.dpl" /seek=<sec>` | Enforces accurate position resume and full-season playlist order. |
 
 ## Tracker behavior
 
