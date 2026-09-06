@@ -1,12 +1,14 @@
 # Supervisor Modes, Watchdog, and Forensics
 
-This guide explains the supervisor modes, the ordered start chain, the watchdog with backoff, and the forensics bundle used for support.
+This guide explains the supervisor modes, the ordered start chain, the watchdog with backoff, defer-until-logon behavior, and the forensics bundle used for support.
 
 ## Contents
 
 - [Modes](#modes)
-- [Ordered start chain](#ordered-start-chain)
-- [Watchdog](#watchdog)
+- [Ordered start chain (boot order)](#ordered-start-chain-boot-order)
+- [Watchdog and backoff](#watchdog-and-backoff)
+- [Boot vs logon (defer-until-logon)](#boot-vs-logon-defer-until-logon)
+- [Cold-restart validation checklist](#cold-restart-validation-checklist)
 - [Dedupe and single instance](#dedupe-and-single-instance)
 - [Status output](#status-output)
 - [Forensics bundle](#forensics-bundle)
@@ -18,46 +20,129 @@ Run every command from the repo root with PowerShell 7 or newer.
 
 | Mode | Command | What it does |
 | --- | --- | --- |
-| Run | `pwsh -File supervisor.ps1 -Mode Run` | Default. Acquires the global mutex, does one ordered start, then loops the watchdog forever. |
-| Start | `pwsh -File supervisor.ps1 -Mode Start` | Does one ordered start with health gates and exits, without looping. |
+| Run | `pwsh -File supervisor.ps1 -Mode Run` | Default. Acquires the global mutex, does one ordered start, then loops the watchdog forever. Normally launched by the `MediaStackSupervisor` ONLOGON scheduled task. |
+| Start | `pwsh -File supervisor.ps1 -Mode Start` | Does one ordered start with health gates and exits, without looping. Safe to retry after fixing a failed gate. |
 | Stop | `pwsh -File supervisor.ps1 -Mode Stop` | Stops panel, Jellyfin, bridge, proxy, and mounts in reverse order and clears the supervisor PID. |
 | Status | `pwsh -File supervisor.ps1 -Mode Status` | Prints a table of path checks, PID files, live processes, listener PIDs, and healthy flags. |
 | Forensics | `pwsh -File supervisor.ps1 -Mode Forensics` | Builds a timestamped zip of logs, PID files, and sync state for support. |
 
 The supervisor creates no scheduled task and kills nothing on load. All side effects happen only inside the explicitly invoked mode. Secrets are refreshed from the live Machine then User environment at start, so children inherit values that were set after the parent shell opened. See [TorBox](torbox.md) for the env setup behind this step.
 
-## Ordered start chain
+## Ordered start chain (boot order)
 
-The chain always runs mounts first and panel last, aborting on the first failed gate with an explicit log.
+`Start-OrderedStack` always runs mounts first and panel last, aborting on the first failed gate with an explicit `ABORT:` log naming the exact service. Downstream services are never started on a broken base. The same order drives bulk panel actions in [Panel](panel.md) and the reboot flow in the repo `RUNBOOK.md`.
 
-1. Drive mount through the mount service or fallback mount script, gated on the media folder path.
-2. TorBox mount through its mount script, gated on the TorBox mount path.
-3. Proxy in `server/torbox-proxy.py`, gated on proxy health with a thirty-second wait.
-4. Bridge helper, gated on bridge health with a ten-second wait and requiring proxy healthy first.
-5. Jellyfin server executable with data, config, cache, log, web, and transcoder folders ensured, gated on public system info with a sixty-second wait.
-6. Panel in `control-panel/control_panel.py`, gated on panel health with a fifteen-second wait.
+| # | Service | Gate | Wait | Start detail |
+| --- | --- | --- | --- | --- |
+| 1 | gdrive | `Test-Path F:\Media` | up to 15 s after `nssm start RcloneGdriveMount`, then up to 30 s after fallback `mount-gdrive.ps1` | Fast path logs `GATE gdrive: OK` and refreshes `run\gdrive.pid` from the live `rclone mount gdrive-media` process when already healthy. |
+| 2 | torboxmount | `Test-Path T:\` | up to 30 s (`$MountWaitSeconds`) | Launches `mount-torbox.ps1` only when `T:\` is missing. Idempotent guard inside the mount script: a live `rclone mount torbox` process serving `T:\` is never killed or restarted (fixes the 2026-09-05 kill-loop with 700+ torboxmount fails and `T:\` flapping when a cold mount could not finish WinFsp init inside the wait). |
+| 3 | proxy | `http://127.0.0.1:8888/health` | up to 30 s (`$ProxyWaitSeconds`) | 7-step gate: initial probe, pre-start dedupe keeping the `LISTENING` PID on `127.0.0.1:8888`, transient-tolerant re-probe (3 x 2 s, start only if still failing), `pythonw torbox-proxy.py` launch, health wait, post-start listener-guard dedupe, final health + listener assert. |
+| 4 | bridge | `http://127.0.0.1:18099/health`, requires proxy OK | up to 10 s (`$BridgeWaitSeconds`) | Same 7-step dedupe/re-probe/guard as proxy. Aborts with `GATE bridge: ABORT (requires proxy OK ...)` when the proxy is down, so the watchdog dependency is enforced at start time too. |
+| 5 | jellyfin | `http://127.0.0.1:8096/System/Info/Public` | up to 60 s (`$JellyfinWaitSecs`) | Ensures data, config, cache, log, transcodes, web, and ffmpeg paths, then starts `server\jellyfin.exe` with `--datadir/--configdir/--cachedir/--logdir/--webdir/--ffmpeg`. Fast path returns `OK` when `8096` already answers. |
+| 6 | panel | `http://127.0.0.1:18080/health` | up to 15 s (`$PanelWaitSeconds`) | Starts `pythonw control_panel.py`. Probe tolerates both loopback and all-interface binds; proxy and bridge keep strict `127.0.0.1` semantics. |
 
-A healthy fast path logs OK and refreshes the PID file without restarting. A failed gate logs an abort naming the exact service, so downstream services are never started on a broken base. The same order is used by bulk panel actions in [Panel](panel.md).
+Dedupe runs before the chain (`Invoke-DedupeAll`): for `:8888`/`:18099` the listening PID is kept and extras are killed with per-parent forensics. A healthy fast path never restarts — it logs `OK`, refreshes the PID file from the live listener or process, and moves on. On failure the chain logs e.g. `ABORT: ordered start chain halted at proxy (127.0.0.1:8888/health failed after 30s). Downstream services NOT started.` In `Run` mode an aborted start still enters the watchdog loop, which keeps retrying with backoff (see below).
 
-## Watchdog
+Stop is the exact reverse, mounts last:
 
-The watchdog loop runs every fifteen seconds and checks three signals per service: HTTP probe, mount path presence, and PID liveness with command-line matching that detects PID reuse.
+```powershell
+pwsh -File supervisor.ps1 -Mode Stop
+# panel -> jellyfin -> bridge -> proxy -> torboxmount -> gdrive
+```
 
-- Healthy services reset their fail counter and refresh PID files from the live listener or process.
-- The bridge is deferred while the proxy is down, preserving the same dependency the start chain enforces.
-- Unhealthy services restart with three fast retries, then a sixty-second cooldown between further attempts.
-- Restart timestamps feed a crash-loop alert when five restarts land inside ten minutes, which is log-only and never changes restart behavior.
-- Transient-tolerant re-probes retry a few times before a duplicate start, which prevents a single flapped probe from spawning a second listener.
+## Watchdog and backoff
 
-This is the same dedupe-first design the panel uses, so manual panel actions and the background watchdog cannot fight over one port.
+The `Run`-mode watchdog loops every **15 s** (`$WatchdogSeconds`) and checks three signals per service on every tick:
+
+1. **HTTP probe** (`Invoke-HttpProbe`, 3–4 s timeout) for proxy/bridge/Jellyfin/panel.
+2. **Mount path presence** (`Test-Path F:\Media` / `Test-Path T:\`) for the two mounts.
+3. **PID liveness with command-line matching** (`Test-PidAlive` + `Win32_Process.CommandLine`) — a PID file pointing at a dead process or a reused PID owned by an unrelated command counts as down.
+
+Tick logic in `Invoke-WatchdogOnce`:
+
+- **Dedupe first.** Duplicate listeners are swept before health is judged, so two PIDs on one port never look like healthy redundancy.
+- **Healthy: reset + refresh.** The per-service fail counter resets to 0 (`WATCHDOG <svc>: recovered (fail counter reset)` when it was non-zero) and `run\<svc>.pid` is rewritten from the live listener PID (`8888`/`18099`/`18080`) or live process (`jellyfin`, `rclone mount ...`). This keeps PID-alive meaningful across restarts.
+- **Bridge deferred while proxy is down.** `WATCHDOG bridge: unhealthy but proxy is also down; deferring bridge restart until proxy recovers.` The start-chain dependency holds in the watchdog too — fix proxy first.
+- **Unhealthy: 3 fast retries, then 60 s cooldown.** Fail counter `+1` per consecutive failing tick:
+
+| Fail count | Action | Log shape |
+| --- | --- | --- |
+| 1–3 | Restart immediately | `WATCHDOG <svc>: unhealthy (pidAlive=...); restarting (fast retry N/3).` then `restart OK` or `restart FAILED; will retry with backoff.` |
+| 4+ | Restart at most once per 60 s since the last restart | `WATCHDOG <svc>: still down (fail #N, pidAlive=...); backoff: waiting Ns before next restart.` When the cooldown has elapsed: `restarting (backoff elapsed (Ns >= 60s, fail #N))`. |
+
+- **Transient-tolerant re-probes.** Proxy/bridge do `Test-HttpHealthyConfirmed` (3 attempts, 2 s apart) before any start, so a single flapped probe never spawns a second listener (`GATE <svc>: probe 1/3 failed (possible transient); re-probing ...`).
+- **Post-start listener guard.** After each proxy/bridge start the guard settles ~1 s, re-checks health when netstat lags, sweeps non-listening duplicates, and reports the surviving `LISTENING` PID (`GUARD <svc>: single PID ... holds 127.0.0.1:<port> LISTENING ...`).
+- **Crash-loop alert (log-only, 5 in 10 min).** Every restart timestamp feeds `Register-RestartForAlert`; five or more restarts of one service inside ten minutes logs `ALERT <svc>: crash-loop suspected (N restarts in last 10m); investigate logs before it wedges ports.` It never changes restart behavior — treat it as an investigation signal, not an auto-stop.
+- **Rotation + mutex.** `logs\supervisor.log` rotates at 10 MB across 5 generations. `Run` holds `Global\MediaStackSupervisor`; a second `Run` exits immediately (`single-instance`).
+
+Tail the backoff state with:
+
+```powershell
+Select-String "WATCHDOG|ALERT|DEDUPE|GUARD|ABORT" logs\supervisor.log -Tail 40
+pwsh -File supervisor.ps1 -Mode Status
+```
+
+## Boot vs logon (defer-until-logon)
+
+The stack deliberately defers everything but the NSSM mount until a user signs in:
+
+- **`MediaStackSupervisor` task — ONLOGON.** Created by `install.ps1` (`Register-SupervisorTask`) as a per-user `AtLogOn` trigger (`Interactive`, `Highest`, `MultipleInstances IgnoreNew`, `StartWhenAvailable`; `schtasks /SC ONLOGON /RL HIGHEST` fallback). Action: `pwsh -NoProfile -ExecutionPolicy Bypass -File supervisor.ps1 -Mode Run`.
+- **Control panel task — per-user logon.** Created by `install-control-panel.ps1` as a hidden `AtLogOn` task via `wscript` (no console window) plus a Start Menu shortcut. Binds localhost only.
+- **NSSM `RcloneGdriveMount` — SERVICE_AUTO_START, Session 0.** Installed by `install-rclone-service.ps1`. This is the only component up at boot with no logon (`gdrive-media:` to `F:\Media`).
+- **`mount-torbox.ps1` — no scheduled task.** `T:\` only appears through the supervisor chain after logon (see the idempotent guard above).
+- **Sync tasks — SYNC ONLY, never supervised.** `MediaServer_TorboxSmartSync` and `MediaServer_GoogleDriveLibrarySync` stay enabled; panel and sync scripts trigger them with `schtasks /Run` instead of duplicating the pipeline.
+
+Consequences:
+
+1. A cold reboot with no logon leaves only `F:\Media` (NSSM) up. Proxy, bridge, Jellyfin, panel, and `T:\` wait for the ONLOGON supervisor run.
+2. After logon, expect the full gate waits to elapse (proxy 30 s, Jellyfin 60 s, views scan ~60 s) before every health check is green — that delay is normal, not a hang.
+3. Env secrets set at Machine/User scope are picked up because the supervisor re-reads the live values at start; open a fresh shell after changing them.
+
+Verify the wiring:
+
+```powershell
+schtasks /Query /TN "MediaStackSupervisor" /FO LIST
+Get-ScheduledTask -TaskName "MediaStackSupervisor" | Format-List TaskName,State,Triggers
+Get-ScheduledTask -TaskName "Jellyfin Control Panel*" | Format-List TaskName,State
+Get-Service RcloneGdriveMount | Format-List Name,Status,StartType
+Test-Path F:\Media; Test-Path T:\
+Invoke-RestMethod http://127.0.0.1:8888/health
+Invoke-RestMethod http://127.0.0.1:18099/health
+```
+
+Portable (`-Portable`) and files-only (`-SkipTasks`) installs intentionally create no tasks — use `supervisor.ps1 -Mode Start` / `-Mode Run` manually in the current session. Uninstall removes the supervisor task (`schtasks /Delete /TN "MediaStackSupervisor" /F`) plus the panel logon task; see [Install](install.md).
+
+## Cold-restart validation checklist
+
+Follow the boot order above. Collect forensics **before** restarting a crashed loop, because restarts rotate evidence. The full operator checklist with copy-paste probes is in the repo `RUNBOOK.md` §3; this is the supervisor-centric subset.
+
+1. **Before reboot:** `supervisor.ps1 -Mode Forensics` (timestamped zip under `backups/`) and `supervisor.ps1 -Mode Status` (note any already-red gate).
+2. **After power-on + logon:** confirm the ONLOGON task ran (`Get-ScheduledTaskInfo -TaskName "MediaStackSupervisor"` → recent `LastRunTime`) and `run\supervisor.pid` is a live PID.
+3. **Gates in order:** `F:\Media` → `T:\` (full 30 s WinFsp wait; never rapid-restart a healthy mount) → `:8888/health` (30 s) → `:18099/health` (10 s, only after proxy green) → `:8096/System/Info/Public` (60 s) → `:18080/health` (15 s). `supervisor.ps1 -Mode Status` must end with all six `Healthy=True`.
+4. **Jellyfin views warming:** `check_status.ps1 -AsJson` exit 0; `check_views_after_restart.ps1 -AsJson` exit 0. Exit 1 right after reboot means still scanning — wait 60 s and re-run; persistent 1/2 means `POST /Library/Refresh` then Jellyfin `data/log/*.log`. Exit codes match [Quickstart](quickstart.md) probes.
+5. **Watchdog settled:** tail shows `fail counter reset` / `restart OK`, exactly one listener per port in dedupe/guard lines, and no `ALERT ... crash-loop suspected`.
+6. **Safe retry:** if one gate failed, fix it then `supervisor.ps1 -Mode Start` once (no loop) followed by `supervisor.ps1 -Mode Status` plus the two JSON checks above.
+
+```powershell
+pwsh -File supervisor.ps1 -Mode Status
+pwsh -File supervisor.ps1 -Mode Forensics
+pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE
+pwsh -File check_views_after_restart.ps1 -AsJson; $LASTEXITCODE
+```
 
 ## Dedupe and single instance
 
 Only one process may own Run mode at a time through a global mutex, with a second instance exiting immediately. PID files live under the run folder, one per service plus supervisor. Dedupe keeps the listening PID for the proxy and bridge ports and kills non-listening duplicates, with per-parent forensics that log parent PID, truncated parent command, creation time, and a per-parent counter. A post-start listener guard settles, rechecks health, sweeps duplicates, and reports the surviving listener PID. Jellyfin and panel ports tolerate both loopback and all-interface binds, while proxy and bridge keep strict loopback semantics.
 
+A single non-listening proxy process is left for the health-gate restart path (avoids flapping during cold start) but logged as `present but 127.0.0.1:8888 has no listener yet (starting or wedged)`. Multiple non-listening processes with no listener are treated as zombies and swept so the watchdog can start one fresh listener.
+
 ## Status output
 
 Status mode prints one row per service with the check that was run, path or probe result, PID file value, PID-alive flag, live process IDs, listener PID, and final healthy flag. Use it before and after any restart, and paste it into support requests alongside the forensics bundle. The expected healthy values match the health probes in [Quickstart](quickstart.md) and the ports in [Architecture](architecture.md).
+
+```powershell
+pwsh -File supervisor.ps1 -Mode Status
+```
 
 ## Forensics bundle
 
@@ -70,9 +155,21 @@ Forensics mode stages and zips the current support evidence without touching tra
 
 Collect forensics before restarting a crashed loop, because restarts rotate evidence. Log locations for deeper digging are listed below and in [Troubleshooting](troubleshooting.md).
 
+```powershell
+pwsh -File supervisor.ps1 -Mode Forensics
+```
+
 ## Logs and alerts
 
 The supervisor log lives under the logs folder with ten-megabyte rotation across five generations. Launcher, prefetch, playback, Jellyfin, proxy metrics, and MCP logs each have their own file or endpoint, all covered in the runbook flow. Watch for ordered-start aborts, watchdog restarts with fast-retry versus backoff reasons, dedupe lines that name kept versus killed PIDs, forensics lines with bundle paths, and crash-loop alerts that signal investigation before ports wedge. Pair this guide with [Panel](panel.md) for card meanings and [Reference](reference.md) for what to back up before deleting logs.
+
+Key strings to grep:
+
+```powershell
+Select-String "ORDERED START|ABORT" logs\supervisor.log -Tail 20
+Select-String "WATCHDOG.*(fast retry|backoff|deferring)" logs\supervisor.log -Tail 20
+Select-String "DEDUPE|GUARD|FORENSICS|ALERT" logs\supervisor.log -Tail 20
+```
 
 ---
 
