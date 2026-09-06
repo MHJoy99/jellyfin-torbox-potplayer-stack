@@ -1,0 +1,138 @@
+/* look3-pack: third-look wins, additive only; dark default untouched. */
+
+/* LK3-001 gradient header */
+.lk3-gradient-header {
+  background: linear-gradient(135deg, var(--accent-soft, rgba(79, 140, 255, 0.14)), transparent 60%), var(--surface, #101010);
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+}
+
+/* LK3-002 glass cards */
+.lk3-glass {
+  background: var(--surface-glass, rgba(255, 255, 255, 0.06));
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  border-radius: 16px;
+  box-shadow: var(--shadow-card, 0 8px 24px rgba(0, 0, 0, 0.35));
+}
+
+/* LK3-003 rounded pills */
+.lk3-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.3em 0.9em;
+  border-radius: 999px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.12));
+  background: var(--surface-2, #161616);
+  color: var(--text, #fff);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* LK3-004 focus glow */
+.lk3-focusable:focus-visible {
+  outline: 2px solid var(--focus-outline, var(--accent, #66a3ff));
+  outline-offset: 2px;
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(102, 163, 255, 0.35));
+}
+
+/* LK3-005 skeleton shimmer keyframes */
+@keyframes lk3-shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.lk3-skeleton {
+  color: transparent !important;
+  background: linear-gradient(90deg, var(--surface-2, #161616) 25%, var(--surface-3, #1e1e1e) 50%, var(--surface-2, #161616) 75%);
+  background-size: 800px 100%;
+  animation: lk3-shimmer 1.4s ease-in-out infinite;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* LK3-006 scrollbar styling */
+.lk3-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb, #3a3a3a) var(--scroll-track, transparent);
+}
+.lk3-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.lk3-scroll::-webkit-scrollbar-track {
+  background: var(--scroll-track, transparent);
+}
+.lk3-scroll::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb, #3a3a3a);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.lk3-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover, #555);
+  background-clip: content-box;
+}
+
+/* LK3-007 badge pop */
+@keyframes lk3-badge-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.lk3-badge-pop {
+  animation: lk3-badge-pop 0.35s ease-out;
+  transform-origin: center;
+}
+
+/* LK3-008 divider glow */
+.lk3-divider-glow {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(90deg, transparent, var(--accent-ring, rgba(102, 163, 255, 0.5)) 30%, var(--accent, #66a3ff) 50%, var(--accent-ring, rgba(102, 163, 255, 0.5)) 70%, transparent);
+  opacity: 0.8;
+}
+
+/* LK3-009 table zebra+ */
+.lk3-zebra tbody tr:nth-child(even) {
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+.lk3-zebra tbody tr:hover {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+}
+.lk3-zebra tbody tr:focus-within {
+  background: var(--accent-soft, rgba(102, 163, 255, 0.12));
+}
+
+/* LK3-010 light-theme opt-in overrides */
+.theme-light .lk3-gradient-header {
+  background: linear-gradient(135deg, var(--accent-soft, rgba(37, 99, 235, 0.1)), transparent 60%), var(--surface, #fff);
+  border-bottom-color: var(--line, rgba(22, 32, 47, 0.12));
+}
+.theme-light .lk3-glass {
+  background: var(--surface-glass, rgba(255, 255, 255, 0.8));
+  border-color: var(--line, rgba(22, 32, 47, 0.12));
+}
+.theme-light .lk3-pill {
+  background: var(--surface-2, #eef2f8);
+  border-color: var(--line, rgba(22, 32, 47, 0.12));
+  color: var(--text, #16202f);
+}
+.theme-light .lk3-skeleton {
+  background: linear-gradient(90deg, var(--surface-2, #eef2f8) 25%, var(--surface-3, #e3eaf4) 50%, var(--surface-2, #eef2f8) 75%);
+  background-size: 800px 100%;
+}

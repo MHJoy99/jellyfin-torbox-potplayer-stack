@@ -2823,6 +2823,17 @@ class ControlPanelHandler(BaseHTTPRequestHandler):
                 "/mobl-pack.js": ("mobl-pack.js", "text/javascript; charset=utf-8"),
                 "/smart-pack.js": ("smart-pack.js", "text/javascript; charset=utf-8"),
                 "/look2-pack.css": ("look2-pack.css", "text/css; charset=utf-8"),
+                "/pnld-pack.js": ("pnld-pack.js", "text/javascript; charset=utf-8"),
+                "/pnlc-pack.js": ("pnlc-pack.js", "text/javascript; charset=utf-8"),
+                "/playc-pack.js": ("playc-pack.js", "text/javascript; charset=utf-8"),
+                "/playd-pack.js": ("playd-pack.js", "text/javascript; charset=utf-8"),
+                "/perf3-pack.js": ("perf3-pack.js", "text/javascript; charset=utf-8"),
+                "/spd4-pack.js": ("spd4-pack.js", "text/javascript; charset=utf-8"),
+                "/opso-pack.js": ("opso-pack.js", "text/javascript; charset=utf-8"),
+                "/opsn-pack.js": ("opsn-pack.js", "text/javascript; charset=utf-8"),
+                "/mobl2-pack.js": ("mobl2-pack.js", "text/javascript; charset=utf-8"),
+                "/smrt2-pack.js": ("smrt2-pack.js", "text/javascript; charset=utf-8"),
+                "/look3-pack.css": ("look3-pack.css", "text/css; charset=utf-8"),
             }
             entry = files.get(path)
             if not entry:
