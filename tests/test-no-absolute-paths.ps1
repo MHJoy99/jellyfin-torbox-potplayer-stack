@@ -1,12 +1,16 @@
-# Fails on machine-specific absolute paths in docs outside fenced code blocks.
+# Keeps public docs portable: fails on machine-specific absolute paths
+# in *.md outside fenced code blocks.
 # Allowed (documented install roots): F:\Jellyfin*, F:\Media*, F:\TorboxMedia*,
-# T:\*, G:\*. Everything else (C:\Users\..., E:\..., other drives) must live
+# T:\*, G:\*, R:\*. Everything else (C:\Users\..., E:\..., other drives) must live
 # inside ``` fences or be removed. Forensic incident logs are frozen history.
+# Usage: pwsh -File tests/test-no-absolute-paths.ps1
+# Exit 0 = no violations, 1 = violations found (prints FAIL <file>:<line>: <path>).
+# Skips .git / .kilo / worktrees / node_modules; see tests/README.md "Portable-path rule".
 $root = Split-Path $PSScriptRoot -Parent
 $frozen = @('GLOBAL_FIX_', 'CONTROL_PANEL.md')
 $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.md' -ErrorAction SilentlyContinue | Where-Object {
-    $p = $_.FullName
-    if ($p -like '*\.git\*' -or $p -like '*\.kilo\*' -or $p -like '*worktrees*') { return $false }
+    $rel = $_.FullName.Substring($root.Length).TrimStart('\', '/')
+    if ($rel -match '^((\.git|\.kilo|node_modules|worktrees)([\\/]|$))') { return $false }
     foreach ($fr in $frozen) { if ($_.Name -like "*$fr*") { return $false } }
     return $true
 })

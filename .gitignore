@@ -23,7 +23,37 @@ __pycache__/
 # OS
 Thumbs.db
 Desktop.ini
+.DS_Store
 
 # Doc screenshots (local only)
 control-panel-*.png
+
+# Editors / IDE (local only, never committed)
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python (local only, never committed)
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+.tox/
+
+# Node (local only, never committed)
+node_modules/
+
+# Temp / coverage (local only, never committed)
+*.tmp
+*.temp
+.coverage
+htmlcov/
+
+# Local env files (local only, never committed; keep tracked examples)
+.env
+.env.local
+!.env.example
 
