@@ -22,9 +22,10 @@ review.
 
 1. Fork the repository and clone your fork.
 2. Install prerequisites: Windows 10 or later, Windows PowerShell 5.1 or
-   PowerShell 7, Python 3.11 or later, and Git.
+   PowerShell 7, Python 3.11 or later, Node.js 20 or later (for JavaScript
+   syntax checks), and Git.
 3. Set secrets as environment variables (never in files). The stack requires
-   `$env:TORBOX_API_KEY` at a minimum. See [No Secrets Rule](#no-secrets-rule)
+   `$env:TORBOX_API_KEY` at a minimum. See [Secret Policy](#secret-policy)
    below.
 4. Verify services locally before changing code:
    `pwsh -File check_status.ps1` should exit with code 0.
@@ -41,8 +42,16 @@ is your first contribution so reviewers can give extra context.
 
 ## Branch Naming
 
-Create a feature branch from `main` for every change. Use a short,
-lowercase, hyphen-separated suffix after one of these prefixes:
+Create a feature branch from `main` for every change. Sync first:
+
+```powershell
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+git checkout -b feat/short-description origin/main
+```
+
+Use a short, lowercase, hyphen-separated suffix after one of these prefixes:
 
 | Prefix | Use for |
 |---|---|
@@ -67,35 +76,91 @@ Keep the subject line under 72 characters. Add a body paragraph when the
 change needs context: what was broken, why this approach was chosen, and any
 follow-up work. Reference related issues with `Refs #123` or `Fixes #123`.
 
-## Local Checks
+## Pull Request Steps
 
-Run these checks locally before opening a pull request. All of them must pass.
+Follow these steps for every pull request:
 
-PowerShell parser gate (must report zero errors):
+1. **Sync and branch.** Fetch `origin`, create your branch from
+   `origin/main` using the naming convention above.
+2. **Link an issue.** Open or pick an issue first. Small typo fixes are the
+   only exception; every code or behavior change needs a tracked issue.
+3. **Make a focused change.** One issue per pull request. Do not reformat
+   unrelated files or mix features with refactors.
+4. **Run the local checks.** Complete every check in
+   [Test Expectations](#test-expectations). All of them must pass before
+   you push.
+5. **Verify the secret scan.** Confirm no keys, tokens, passwords, OAuth
+   blobs, or `rclone.conf` contents are present in the diff, comments, or
+   attached logs. See [Secret Policy](#secret-policy).
+6. **Push and open the pull request.** Fill in the entire pull request
+   template: linked issue, what and why, verification output pasted as text,
+   and screenshots (or `No visual change.`).
+7. **Respond to review.** Address every comment, push fixup commits to the
+   same branch, and re-run the local checks. Mark threads resolved only
+   after pushing the fix.
+8. **Wait for merge.** Maintainers squash or merge once CI is green and at
+   least one approval is recorded. Do not merge your own pull request
+   unless a maintainer asks you to.
+
+Draft pull requests are welcome for early feedback; mark the pull request
+ready for review only when steps 1-6 are complete.
+
+## Test Expectations
+
+Every pull request must meet these expectations. They mirror the CI jobs in
+`.github/workflows/ci.yml` and `.github/workflows/secret-scan.yml`.
+
+| Check | CI job | Local command | Pass criteria |
+|---|---|---|---|
+| PowerShell parse | `ps1-parse` | Parse every `*.ps1` recursively (see snippet) | Zero errors |
+| Python compile | `python-compile` (3.11 and 3.12) | `python -m py_compile` on every `*.py` touched, or all files | Exit code 0 |
+| JavaScript syntax | `js-syntax` (Node 20 and 22) | `node --check` on every `*.js` touched | Exit code 0 |
+| Markdown hygiene | `markdown-links` | No new absolute local paths; headers use a space after `#`; relative links resolve | No new warnings |
+| Secret scan | `no-secrets` + `secret-scan.yml` (gitleaks) | Manual diff review plus `gitleaks detect --source .` when available | Zero hits |
+| Smoke test | Manual | `pwsh -File check_status.ps1` | Exit code 0 |
+
+PowerShell parser gate over all files (must report zero errors):
 
 ```powershell
-$files = @('check_status.ps1','check_user_views.ps1','check_views_after_restart.ps1','clean_and_setup_libraries.ps1','cleanup_and_check_items.ps1','cleanup_extra_libraries.ps1','delete_stale_views.ps1','test_dpl.ps1','test_mcp_server.ps1','annotate_screenshot.ps1','PotPlayerLauncher.ps1')
+$ErrorActionPreference = 'Stop'
+$files = Get-ChildItem -Recurse -Filter *.ps1 -File
 $e = 0
 foreach ($f in $files) {
   $errs = $null
-  $null = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$errs)
-  Write-Host "$f errors=$($errs.Count)"
+  $null = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
+  if ($errs.Count -gt 0) {
+    Write-Host ("FAIL " + $f.FullName + " errors=" + $errs.Count)
+  }
   $e += $errs.Count
 }
+Write-Host ("Total errors=" + $e)
 exit $e
 ```
 
-Python syntax check for the files you touched (extend the list as needed):
+Python syntax check for the files you touched (or all files to match CI):
 
 ```powershell
 python -m py_compile server/torbox-proxy.py control-panel/control_panel.py mcp-servers/rclone-storage/server.py
 ```
 
-If you changed JavaScript, load the control panel locally and confirm the
-browser console shows no errors. If you changed Markdown, confirm headers use
-a space after `#` (for example `## Setup`) and that relative links resolve.
+JavaScript syntax check for the files you touched:
 
-## No Secrets Rule
+```powershell
+node --check control-panel/app.js
+```
+
+If you changed JavaScript, also load the control panel locally and confirm
+the browser console shows no errors. If you changed Markdown, confirm headers
+use a space after `#` (for example `## Setup`), relative links resolve, and
+you did not introduce new absolute local paths except for
+documented stack paths such as `F:\Jellyfin\logs`.
+
+Paste the relevant command output (parser counts, `py_compile` result,
+`node --check` result, `check_status.ps1` exit code) into the
+`Verification Checklist` section of the pull request template. An empty
+checklist or a screenshot of a terminal is not sufficient; paste the text.
+
+## Secret Policy
 
 Never commit secrets. All credentials are environment variables or the OS
 credential store:
@@ -104,12 +169,24 @@ credential store:
 - `$env:JELLYFIN_USER` and `$env:JELLYFIN_PASSWORD` for automation.
 - `$env:JELLYFIN_API_KEY` for Jellyfin API access.
 
-Do not paste keys, tokens, passwords, OAuth blobs, or full `rclone.conf`
-contents into code, issues, pull requests, or logs. Redact them as
-`<redacted>` before sharing. Maintainers recommend running
-[gitleaks](https://github.com/gitleaks/gitleaks) (`gitleaks detect --source .`)
-before pushing. A pull request containing a secret will be closed until the
-secret is revoked and the history is cleaned.
+Rules:
+
+- Do not paste keys, tokens, passwords, OAuth blobs, session cookies, or
+  full `rclone.conf` contents into code, comments, issues, pull requests,
+  discussions, or logs. Redact them as `<redacted>` before sharing.
+- Do not add a working credential even to demonstrate a bug. A redacted
+  reproduction is sufficient.
+- Run [gitleaks](https://github.com/gitleaks/gitleaks)
+  (`gitleaks detect --source .`) before pushing when possible. CI also runs
+  a `no-secrets` pattern scan and a weekly secret scan; either one failing
+  blocks the pull request.
+- If a secret leaks into a commit, issue, or log: revoke and rotate it
+  immediately, then clean the history (for example with `git filter-repo`
+  or BFG) and force-push only your feature branch. Tell a maintainer so the
+  exposure window can be assessed. A pull request containing a live secret
+  will be closed until the secret is revoked and the history is cleaned.
+- The same policy applies to security reports and support bundles; see
+  [Security Policy](SECURITY.md) and [Support](SUPPORT.md).
 
 ## Windows-Specific Gotchas
 
@@ -149,11 +226,20 @@ license as the repository.
 
 ## Pull Request Checklist
 
+Copy this checklist into your pull request description (it mirrors
+`.github/pull_request_template.md`) and check every box:
+
 - [ ] Linked issue referenced (`Fixes #123` or `Refs #123`).
-- [ ] Branch follows the `feat/`, `fix/`, `docs/`, or `chore/` convention.
-- [ ] PowerShell parser gate passes with zero errors.
-- [ ] `python -m py_compile` passes for every Python file touched.
-- [ ] No secrets, tokens, or credentials in code, comments, or logs.
+- [ ] Branch created from `origin/main` and follows the `feat/`, `fix/`,
+      `docs/`, or `chore/` convention.
+- [ ] PowerShell parser gate passes with zero errors (output pasted).
+- [ ] `python -m py_compile` passes for every Python file touched
+      (output pasted).
+- [ ] `node --check` passes for every JavaScript file touched, or `No JS
+      change` noted.
+- [ ] `check_status.ps1` smoke test passes (exit code pasted).
+- [ ] No secrets, tokens, or credentials in code, comments, or logs;
+      gitleaks or CI `no-secrets` passes.
 - [ ] Documentation updated (`README.md`, `RUNBOOK.md`, or `ARCHITECTURE.md`
       as applicable).
 - [ ] Tested on Windows; execution-policy and admin notes included if needed.
