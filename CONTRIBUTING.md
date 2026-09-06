@@ -1,16 +1,16 @@
 # Contributing
 
 Thank you for your interest in contributing. This guide explains how to set up
-your environment, propose changes, and submit pull requests that are easy to
-review.
+your environment, propose changes, submit pull requests, and understand how
+maintainers review your work.
 
 ## Documentation Index
 
 | Document | Purpose |
 |---|---|
 | [Code of Conduct](CODE_OF_CONDUCT.md) | Expected behavior for everyone in this community |
-| [Security Policy](SECURITY.md) | Supported versions and how to report vulnerabilities privately |
-| [Support](SUPPORT.md) | Where to ask questions and how to build a log bundle |
+| [Security Policy](SECURITY.md) | Supported versions, severity SLAs, and private vulnerability reporting |
+| [Support](SUPPORT.md) | Where to ask questions, log bundle guide, and response templates |
 | [Bug report template](.github/ISSUE_TEMPLATE/bug_report.md) | Template for filing reproducible bug reports |
 | [Feature request template](.github/ISSUE_TEMPLATE/feature_request.md) | Template for proposing new features |
 | [Pull request template](.github/pull_request_template.md) | Template used for all pull requests |
@@ -243,6 +243,22 @@ Copy this checklist into your pull request description (it mirrors
 - [ ] Documentation updated (`README.md`, `RUNBOOK.md`, or `ARCHITECTURE.md`
       as applicable).
 - [ ] Tested on Windows; execution-policy and admin notes included if needed.
+
+## PR Review Checklist & Maintainer Acceptance Criteria
+
+Maintainers use this review checklist when evaluating pull requests. Authors
+can use these criteria for self-review before requesting maintainer review:
+
+| Category | Maintainer Review Criteria |
+|---|---|
+| **Scope & Focus** | PR addresses exactly one issue/feature without unrelated whitespace, formatting, or architectural scope creep. |
+| **CI & Validation** | All CI jobs green (`ps1-parse`, `python-compile` 3.11/3.12, `js-syntax` Node 20/22, `markdown-links`, `no-secrets`). Verifiable command output pasted in the PR description. |
+| **Secret Hygiene** | Diff has zero hardcoded keys, tokens, session cookies, OAuth payloads, or sensitive machine usernames. |
+| **Compatibility** | PowerShell scripts run without breaking under both Windows PowerShell 5.1 and PowerShell 7. No unsupported bashisms or Linux-only paths in Windows automation scripts. |
+| **Error Handling** | Scripts use explicit error handling (`$ErrorActionPreference = 'Stop'`, try/catch, clear exit codes, diagnostic error messages). |
+| **Idempotence & Safety** | State modifications (service installs, registry writes, directory setups) are safe to re-run and cleanly report existing state without throwing unhandled exceptions. |
+| **Documentation** | New flags, endpoints, or procedures are documented in the corresponding operational guides (`README.md`, `RUNBOOK.md`, `SUPPORT.md`, `ARCHITECTURE.md`). |
+| **Code Style** | Follows established repository style conventions, LF/CRLF rules per `.gitattributes`, and clear imperative commit messages. |
 
 ## Response Times
 
