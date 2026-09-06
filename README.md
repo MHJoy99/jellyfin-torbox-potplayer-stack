@@ -152,19 +152,16 @@ See [RUNBOOK.md](RUNBOOK.md) for rotation (env + registry → restart proxy/supe
 
 ## 📸 Screenshots
 
-> Drop zone: save PNGs under `docs/screenshots/` (relative links below). Suggested size 1600x900, hide personal library names before committing.
+> Status: no PNG screenshots are committed yet — `assets/screenshots/` contains only `PLACEHOLDER.md`. The table below is a capture checklist, not embedded images, so there are no broken image links. The only committed visual is the vector banner `assets/social-preview.svg` (1200x630).
 
-![Control panel — services green, Start all, metrics](docs/screenshots/01-control-panel.png)
-_Control panel at `http://127.0.0.1:18080` — mounts, proxy, bridge, and Jellyfin all green._
+| Pending file (`assets/screenshots/`) | Surface | Must show (demo data only) | Alt text for future embed |
+|---|---|---|---|
+| `01-control-panel.png` | Control panel at `http://127.0.0.1:18080` | Full window, all services green, Start all and metrics visible | `Control panel overview showing all media-stack services running` |
+| `02-jellyfin-nextup.png` | Jellyfin at `http://127.0.0.1:8096`, Series view | Demo posters, Next-Up row, and the Play-in-PotPlayer entry point | `Jellyfin Series page with demo posters, Next-Up row, and Play-in-PotPlayer entry` |
+| `03-potplayer-direct-stream.png` | PotPlayer x64 via local `:8888` proxy | Direct-stream playback with the full-season playlist queue visible | `PotPlayer playing a direct stream with the full-season playlist visible` |
+| `04-watch-console.png` | Watch console (`show-playback-log.ps1`) | Progress ticks and 80% Played marking with demo titles | `Watch console showing playback progress ticks and Played marking` |
 
-![Jellyfin Series page with Next-Up and Play-in-PotPlayer](docs/screenshots/02-jellyfin-nextup.png)
-_Jellyfin Series page — TMDB metadata, Next-Up, and the Play-in-PotPlayer button._
-
-![PotPlayer playing 4K direct-stream with full-cache seek bar](docs/screenshots/03-potplayer-direct-stream.png)
-_PotPlayer x64 — full-season `.dpl`, instant seek, solid full-cache bar via `:8888` proxy._
-
-![Watch console showing 5s progress ticks and 80 percent played marking](docs/screenshots/04-watch-console.png)
-_Watch console (`show-playback-log.ps1`) — 5s progress ticks and 80% Played marking._
+Capture rules (full checklist in `assets/screenshots/PLACEHOLDER.md`): PNG ≤ 1600 px wide, maximized window, cropped chrome, demo library only, blur tokens, hostnames, and private titles before saving. Name files exactly as above so future embeds stay stable.
 
 ## 🆚 Comparison — Why Not Plain Jellyfin, Plex, or Infuse?
 
