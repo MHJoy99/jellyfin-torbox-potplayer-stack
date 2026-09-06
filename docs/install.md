@@ -8,6 +8,7 @@ This guide covers every install path plus updating and clean removal, so one fil
 - [Prerequisites](#prerequisites)
 - [One-click install with install.ps1](#one-click-install-with-installps1)
 - [Interactive setup with setup-wizard.ps1](#interactive-setup-with-setup-wizardps1)
+- [Step-by-step verification matrix](#step-by-step-verification-matrix)
 - [Manual install in order](#manual-install-in-order)
 - [Portable run without tasks](#portable-run-without-tasks)
 - [Verify the install](#verify-the-install)
@@ -89,6 +90,29 @@ The menu runs in this order with a progress counter (`step X of 10`):
 11. Save answers plus opt-in open of the panel URL plus finish screen with docs links.
 
 Answers are saved to `setup-answers.json` minus secrets, and the run is appended to `setup-wizard.log` with secrets redacted. TorBox keys and Jellyfin tokens live only in memory plus User and process environment variables; they are never written to the answers file or the log.
+
+## Step-by-step verification matrix
+
+Use this matrix to verify every step of `install.ps1` and `setup-wizard.ps1` independently, matching the installer's internal checks:
+
+| Step / Action | Command | Expected Output | What Failure Looks Like |
+| --- | --- | --- | --- |
+| **1. Admin check & PS version** | `[Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent(); $PSVersionTable.PSVersion` | IsInRole `True` for Administrator; Major `>= 5` (recommend `>= 7`) | `[fail] Preflight failed: not elevated` (exit `2`), prompt offer to re-launch as Admin, or PS `< 5.1` abort |
+| **2. Tool detection** | `pwsh --version; python --version; node --version; rclone --version` | Formatted table showing `Found: yes` and versions for `pwsh`, `python`, `node`, `rclone` | `Found: NO` with download link warning (e.g. `Missing python: install from https://www.python.org/downloads/windows/`) |
+| **3. TorBox key validation** | `Invoke-RestMethod "https://api.torbox.app/v1/api/user/me?token=$env:TORBOX_API_KEY"` | `success: True` with user profile object (`[ok] TorBox key validated`) | HTTP 401/403/422 or network exception; `[fail] TorBox rejected the key (HTTP 401)` (exit `1`) |
+| **4. Directory layout** | `Test-Path F:\Jellyfin\logs, F:\Jellyfin\cache, F:\Jellyfin\run, F:\Jellyfin\backups, F:\Jellyfin\.install-versions` | All return `True` (`[ok] Directory layout ready`) | Permission error `Access is denied` or path not found; install triggers rollback |
+| **5. Key persistence** | `[Environment]::GetEnvironmentVariable('TORBOX_API_KEY', 'Machine'); [Environment]::GetEnvironmentVariable('TORBOX_API_KEY', 'User')` | Returns non-empty key string matching chosen scope | Empty string or `Could not persist TORBOX_API_KEY to Machine scope: Access is denied` |
+| **6. Protocol registration** | `(Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\potplayer\shell\open\command').'(default)'; (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\potplayer64\shell\open\command').'(default)'` | Both show `powershell.exe ... -File "F:\Jellyfin\potplayer-launcher.ps1" "%1"` | Empty/missing key or `Verification failed: potplayer handler is empty` |
+| **7. Scheduled task** | `Get-ScheduledTask -TaskName 'MediaStackSupervisor' \| Select-Object TaskName, State` | `TaskName: MediaStackSupervisor`, `State: Ready` | `Task verification failed: MediaStackSupervisor not found`; prints manual `schtasks /Create` command |
+| **8. Supervisor Start** | `pwsh -File F:\Jellyfin\supervisor.ps1 -Mode Start; $LASTEXITCODE` | Exit code `0` (`[ok] Supervisor Start completed (exit 0)`) | Exit code `!= 0`; mounts down, proxy fails to bind port, or missing prerequisite remotes |
+| **9. Health table: Proxy (:8888)** | `Invoke-RestMethod http://127.0.0.1:8888/health` | `status: "ok"` or `{"status":"ok"}` (TCP listening, HTTP pass) | Connection refused (`FAIL`), HTTP 5xx, or process not listening |
+| **9. Health table: Bridge (:18099)** | `Invoke-RestMethod http://127.0.0.1:18099/health` | HTTP `200` response (TCP listening, HTTP pass) | Connection refused (`FAIL`), port closed, or proxy prerequisite down |
+| **9. Health table: Panel (:18080)** | `Invoke-RestMethod http://127.0.0.1:18080/health` | `status: "ok"` with version (TCP listening, HTTP pass) | Connection refused (`FAIL`), port conflict, or pythonw process crashed |
+| **9. Health table: Jellyfin (:8096)** | `Invoke-RestMethod http://127.0.0.1:8096/System/Info/Public` | JSON with `ServerName`, `Version`, `Id` | Connection refused (`FAIL`), port closed, or server still starting |
+| **10. Receipt & version stamp** | `Get-Content F:\Jellyfin\.install-versions\install.receipt.json \| ConvertFrom-Json` | JSON with `status: "installed"`, `installer: "oneclick-install"`, masked key metadata (no secrets) | File missing, invalid JSON, or TorBox key material found in JSON payload |
+| **Wizard: Library roots** | `Test-Path F:\TorboxMedia` | `True` for each configured library root | `missing` flag in wizard table, created on wizard apply |
+| **Wizard: Port occupancy** | `Get-NetTCPConnection -LocalPort 8888,18099,18080,8096 -State Listen -ErrorAction SilentlyContinue` | Ports free before start, occupied by expected stack processes after start | Unexpected occupant process name (e.g. conflicting web server or zombie PID) |
+| **Wizard: rclone.conf check** | `rclone --config "F:\Jellyfin\config\rclone.conf" listremotes` | Lists configured remotes (e.g. `torbox:`, `gdrive-media:`) | `rclone.conf NOT found` warning; wizard provides step-by-step `rclone config` instructions |
 
 ## Manual install in order
 
