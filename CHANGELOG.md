@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Unreleased-section discipline & entry rules
+
+To keep this changelog accurate, reliable, and auditable across distributed development:
+
+1. **Merged-only rule:** Only changes from commits that have already landed on `origin/main` may be listed in `[Unreleased]`. Never add prospective features, active branch experiments, or unmerged PRs.
+2. **No invented releases:** Do not add release headers (`## [X.Y.Z]`) until an actual release is cut via `release.ps1` and tagged. `VERSION` at repository root remains the sole source of truth.
+3. **Standard categorization:** Group entries strictly under Keep-a-Changelog subheadings: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`.
+4. **Concrete & verifiable descriptions:** Name the exact scripts, modules, or config files modified. Include commit hashes where relevant for fast traceability.
+5. **No secret disclosure:** Never record token values, credentials, or private URLs in changelog entries.
+
+---
+
 ## [Unreleased]
 
 Current development since v1.0.0. `VERSION` remains `1.0.0`; no new tag
