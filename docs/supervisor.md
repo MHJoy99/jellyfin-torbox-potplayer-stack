@@ -8,7 +8,7 @@ This guide explains the supervisor modes, the ordered start chain, the watchdog 
 - [Ordered start chain (boot order)](#ordered-start-chain-boot-order)
 - [Watchdog and backoff](#watchdog-and-backoff)
 - [Boot vs logon (defer-until-logon)](#boot-vs-logon-defer-until-logon)
-- [Cold-restart validation checklist](#cold-restart-validation-checklist)
+- [Cold-restart validation procedure](#cold-restart-validation-procedure)
 - [Dedupe and single instance](#dedupe-and-single-instance)
 - [Status output](#status-output)
 - [Forensics bundle](#forensics-bundle)
@@ -112,23 +112,100 @@ Invoke-RestMethod http://127.0.0.1:18099/health
 
 Portable (`-Portable`) and files-only (`-SkipTasks`) installs intentionally create no tasks — use `supervisor.ps1 -Mode Start` / `-Mode Run` manually in the current session. Uninstall removes the supervisor task (`schtasks /Delete /TN "MediaStackSupervisor" /F`) plus the panel logon task; see [Install](install.md).
 
-## Cold-restart validation checklist
+## Cold-restart validation procedure
 
-Follow the boot order above. Collect forensics **before** restarting a crashed loop, because restarts rotate evidence. The full operator checklist with copy-paste probes is in the repo `RUNBOOK.md` §3; this is the supervisor-centric subset.
+Follow this step-by-step procedure to validate the stack after a host reboot, crash recovery, or cold restart.
 
-1. **Before reboot:** `supervisor.ps1 -Mode Forensics` (timestamped zip under `backups/`) and `supervisor.ps1 -Mode Status` (note any already-red gate).
-2. **After power-on + logon:** confirm the ONLOGON task ran (`Get-ScheduledTaskInfo -TaskName "MediaStackSupervisor"` → recent `LastRunTime`) and `run\supervisor.pid` is a live PID.
-3. **Gates in order:** `F:\Media` → `T:\` (full 30 s WinFsp wait; never rapid-restart a healthy mount) → `:8888/health` (30 s) → `:18099/health` (10 s, only after proxy green) → `:8096/System/Info/Public` (60 s) → `:18080/health` (15 s). `supervisor.ps1 -Mode Status` must end with all six `Healthy=True`.
-4. **Jellyfin views warming:** `check_status.ps1 -AsJson` exit 0; `check_views_after_restart.ps1 -AsJson` exit 0. Exit 1 right after reboot means still scanning — wait 60 s and re-run; persistent 1/2 means `POST /Library/Refresh` then Jellyfin `data/log/*.log`. Exit codes match [Quickstart](quickstart.md) probes.
-5. **Watchdog settled:** tail shows `fail counter reset` / `restart OK`, exactly one listener per port in dedupe/guard lines, and no `ALERT ... crash-loop suspected`.
-6. **Safe retry:** if one gate failed, fix it then `supervisor.ps1 -Mode Start` once (no loop) followed by `supervisor.ps1 -Mode Status` plus the two JSON checks above.
+> **Rule:** Always capture forensics **before** restarting a crashed stack to prevent losing logs from rotation.
 
 ```powershell
-pwsh -File supervisor.ps1 -Mode Status
+# Pre-restart snapshot
 pwsh -File supervisor.ps1 -Mode Forensics
-pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE
-pwsh -File check_views_after_restart.ps1 -AsJson; $LASTEXITCODE
+pwsh -File supervisor.ps1 -Mode Status
 ```
+
+### Exact verification steps & pass criteria
+
+#### Step 1: Confirm supervisor logon task & mutex
+```powershell
+# Query logon task status
+Get-ScheduledTask -TaskName "MediaStackSupervisor" | Format-Table TaskName, State, @{N='LastRun';E={(Get-ScheduledTaskInfo $_).LastRunTime}}, @{N='LastResult';E={(Get-ScheduledTaskInfo $_).LastTaskResult}}
+
+# Confirm PID in run\supervisor.pid matches active supervisor
+$supPid = Get-Content -LiteralPath "F:\Jellyfin\run\supervisor.pid" -ErrorAction SilentlyContinue
+Get-Process -Id $supPid -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime
+```
+- **Pass criteria:** Task state is `Ready` or `Running`, `LastResult` is `0`, and `supervisor.pid` holds a single active `pwsh` process owning `Global\MediaStackSupervisor`.
+
+#### Step 2: Verify live process table and single listening PIDs
+```powershell
+# 1. Check supervisor status table
+pwsh -File supervisor.ps1 -Mode Status
+
+# 2. Check listening TCP ports
+netstat -ano -p tcp | Select-String -Pattern ":(8888|18099|18080|8096)\s+.*LISTENING"
+```
+- **Pass criteria:**
+  - `supervisor.ps1 -Mode Status` prints 6 rows, all with `Healthy=True` and `PidAlive=True`.
+  - PID files under `run\*.pid` match live process IDs for all 6 components.
+  - `netstat` shows **exactly one** `LISTENING` row for each of `:8888`, `:18099`, `:18080`, and `:8096`. No duplicate zombie python/rclone processes.
+
+#### Step 3: Explicit HTTP 200 checks & path verification
+```powershell
+# Verify mount paths
+Test-Path -LiteralPath "F:\Media" # Must return True
+Test-Path -LiteralPath "T:\"      # Must return True
+
+# Query all HTTP health gates
+$gates = @(
+    @{ Name = 'TorboxProxy';     Url = 'http://127.0.0.1:8888/health' },
+    @{ Name = 'TorboxMyList';    Url = 'http://127.0.0.1:8888/mylist' },
+    @{ Name = 'PotPlayerBridge'; Url = 'http://127.0.0.1:18099/health' },
+    @{ Name = 'JellyfinPublic';  Url = 'http://127.0.0.1:8096/System/Info/Public' },
+    @{ Name = 'ControlPanel';    Url = 'http://127.0.0.1:18080/health' }
+)
+foreach ($g in $gates) {
+    try {
+        $res = Invoke-WebRequest -Uri $g.Url -Method Get -TimeoutSec 5 -UseBasicParsing
+        [PSCustomObject]@{ Gate = $g.Name; StatusCode = $res.StatusCode; Result = 'PASS'; Url = $g.Url }
+    } catch {
+        [PSCustomObject]@{ Gate = $g.Name; StatusCode = $_.Exception.Response.StatusCode.value__; Result = 'FAIL'; Url = $g.Url }
+    }
+}
+```
+- **Pass criteria:** Both `Test-Path` calls return `True`. All 5 endpoints return `StatusCode: 200` with `Result: PASS`.
+
+#### Step 4: Jellyfin auth & views check
+```powershell
+pwsh -File check_status.ps1 -AsJson; Write-Host "Status Exit: $LASTEXITCODE"
+pwsh -File check_views_after_restart.ps1 -AsJson; Write-Host "Views Exit: $LASTEXITCODE"
+```
+- **Pass criteria:** Both scripts return JSON payloads with `status: "OK"` and exit code **`0`**. (Exit `1` on views check within the first 60 seconds indicates library warming; re-test after 60s).
+
+#### Step 5: Check watchdog quietness (no retry noise or alerts)
+```powershell
+# Inspect supervisor log tail
+Select-String "WATCHDOG|ALERT|DEDUPE|GUARD|ABORT" F:\Jellyfin\logs\supervisor.log -Tail 40
+
+# Check for error noise
+$errors = Select-String "ALERT|crash-loop|restart FAILED|ABORT" F:\Jellyfin\logs\supervisor.log -Tail 100
+if ($errors) {
+    Write-Host "[!] Found watchdog error noise in recent logs:" -ForegroundColor Red
+    $errors | Format-Table -AutoSize
+} else {
+    Write-Host "[+] Supervisor log is clean and quiet." -ForegroundColor Green
+}
+```
+- **Pass criteria:** Zero `ALERT` lines, no `restart FAILED`, no `crash-loop suspected`, and no repeating `backoff: waiting` loops.
+
+#### Step 6: Playback smoke test
+```powershell
+pwsh -File test_dpl.ps1 -SkipLaunch
+pwsh -File test_mcp_server.ps1
+```
+- **Pass criteria:** Both test suites finish with 0 errors.
+
+---
 
 ## Dedupe and single instance
 

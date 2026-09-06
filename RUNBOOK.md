@@ -118,46 +118,176 @@ pwsh -File supervisor.ps1 -Mode Status
 After any rotation: run `test_mcp_server.ps1` (MCP still lists/calls) and
 `check_status.ps1` (Jellyfin auth still 0).
 
-## 3. Cold-restart validation checklist
+## 3. Cold-restart validation procedure & checklist
 
-Use this after any reboot, power loss, or `supervisor.ps1 -Mode Stop`. It
-follows the boot order in §1 and expects the defer-until-logon delay in §1a:
-nothing but the NSSM gdrive mount is up until you sign in and the ONLOGON
-task fires. Collect forensics **before** restarting a crashed loop, because
-restarts rotate evidence.
+Use this rigorous step-by-step procedure after any cold power-on, host reboot,
+service crash recovery, or `supervisor.ps1 -Mode Stop`.
 
-### 3a. Before you reboot
-
-- [ ] `TORBOX_API_KEY`, `JELLYFIN_USER`, `JELLYFIN_PASSWORD` present in env (no hardcoded fallbacks).
-- [ ] `pwsh -File supervisor.ps1 -Mode Forensics` saved a timestamped zip under `backups/` (send it + `Status` output with any support request).
-- [ ] `pwsh -File supervisor.ps1 -Mode Status` shows all six rows `Healthy=True` (or note which gate was already red).
-
-### 3b. After power-on + logon (in order, with waits)
-
-- [ ] Logon task fired: `Get-ScheduledTaskInfo -TaskName "MediaStackSupervisor"` shows a recent `LastRunTime`; `run\supervisor.pid` points at a live PID.
-- [ ] **1 — gdrive:** `Test-Path F:\Media` is true; `Get-Service RcloneGdriveMount` is `Running`. If missing, `nssm start RcloneGdriveMount`, wait 15 s, else check `logs\rclone-mount.log`. Allow up to 30 s for the fallback script path.
-- [ ] **2 — torboxmount:** `Test-Path T:\` is true; one `rclone mount torbox` process. If stale, do **not** kill a healthy mount — run `mount-torbox.ps1` once and wait the full 30 s for WinFsp init; `T:\` flapping after rapid retries means you restarted too fast.
-- [ ] **3 — proxy:** `Invoke-RestMethod http://127.0.0.1:8888/health` OK within 30 s; `Invoke-RestMethod http://127.0.0.1:8888/mylist` fresh (<15 min). Exactly one `LISTENING` PID on `127.0.0.1:8888`.
-- [ ] **4 — bridge:** `Invoke-RestMethod http://127.0.0.1:18099/health` OK within 10 s **after** proxy is green. If proxy is red, fix proxy first — bridge restarts are deferred by design.
-- [ ] **5 — Jellyfin:** `pwsh -File check_status.ps1 -AsJson` exits 0 within 60 s of start (server reachable + auth OK + libraries present). Exit 1 = warming/degraded (no libraries yet); exit 2 = investigate API/auth.
-- [ ] **6 — panel:** `http://127.0.0.1:18080` loads; Play-in-PotPlayer button invokes `potplayer://`. Expect green only after the real endpoint re-probe passes.
-- [ ] **Views warming:** `pwsh -File check_views_after_restart.ps1 -AsJson` exits 0. Exit 1 right after reboot is normal — wait 60 s for the library scan and re-run; if still 1/2, trigger `POST /Library/Refresh` via `check_user_views.ps1`, then inspect Jellyfin `data/log/*.log`.
-- [ ] **Watchdog settled:** `Select-String "WATCHDOG|ALERT|DEDUPE|GUARD" logs\supervisor.log -Tail 30` shows `fail counter reset` / `restart OK`, no `ALERT ... crash-loop suspected (5+ in 10m)`, and dedupe lines keep exactly one listener per port.
-- [ ] **Playback chain:** `test_dpl.ps1 -SkipLaunch` passes; live launch plays full-season `.dpl`. `show-playback-log.ps1` shows 5 s progress; Next-Up advances at 80%.
-- [ ] **Disk + backups:** `F:\` prefetch <20 GB; `cache/`, `transcodes/`, `logs/` not filling OS disk. `scripts/backup-and-vacuum-db.ps1` scheduled task succeeded.
-
-If views are empty after reboot: wait 60 s for scan, re-run
-`check_views_after_restart.ps1`; if still 1/2, trigger
-`POST /Library/Refresh` via `check_user_views.ps1`, then inspect Jellyfin logs.
-
-One-shot ordered re-run without the watchdog loop (safe to retry after fixing a gate):
+> **Rule:** Collect forensics **before** restarting a crashed stack, because
+> restarts rotate logs and refresh PID files.
 
 ```powershell
-pwsh -File supervisor.ps1 -Mode Start
+# Pre-restart snapshot (run before touching anything broken)
+pwsh -File supervisor.ps1 -Mode Forensics
 pwsh -File supervisor.ps1 -Mode Status
-pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE
-pwsh -File check_views_after_restart.ps1 -AsJson; $LASTEXITCODE
 ```
+
+### Exact execution sequence & pass criteria
+
+#### Phase 1: Verify logon task and supervisor single-instance
+Run immediately after signing into Windows:
+
+```powershell
+# 1.1 Verify logon task executed
+Get-ScheduledTask -TaskName "MediaStackSupervisor" | Format-Table TaskName, State, @{N='LastRun';E={(Get-ScheduledTaskInfo $_).LastRunTime}}, @{N='LastResult';E={(Get-ScheduledTaskInfo $_).LastTaskResult}}
+
+# 1.2 Verify supervisor PID file and single live process holding Global\MediaStackSupervisor
+$supPid = Get-Content -LiteralPath "F:\Jellyfin\run\supervisor.pid" -ErrorAction SilentlyContinue
+Get-Process -Id $supPid -ErrorAction SilentlyContinue | Format-Table Id, ProcessName, StartTime
+```
+
+**Pass criteria:**
+- Scheduled task state is `Ready` or `Running`, `LastResult` is `0`, `LastRun` matches current logon time.
+- `F:\Jellyfin\run\supervisor.pid` exists and contains a valid active `pwsh` PID. Exactly **one** supervisor instance is alive.
+
+---
+
+#### Phase 2: Verify fresh PIDs and live listener table
+Inspect running processes and active TCP listeners across all six services:
+
+```powershell
+# 2.1 Table of all PID files vs live process IDs vs listening ports
+pwsh -File supervisor.ps1 -Mode Status
+
+# 2.2 Verify exactly one listening process per port (strict loopback / any)
+netstat -ano -p tcp | Select-String -Pattern ":(8888|18099|18080|8096)\s+.*LISTENING"
+```
+
+**Pass criteria:**
+- `supervisor.ps1 -Mode Status` prints 6 rows, all with `Healthy=True` and `PidAlive=True`.
+- Every service PID file under `run\*.pid` matches the actual live process ID:
+  - `run\gdrive.pid` -> matches `rclone.exe` (`mount gdrive-media`)
+  - `run\torboxmount.pid` -> matches `rclone.exe` (`mount torbox`)
+  - `run\proxy.pid` -> matches `pythonw.exe` listening on `127.0.0.1:8888`
+  - `run\bridge.pid` -> matches `pythonw.exe` listening on `127.0.0.1:18099`
+  - `run\jellyfin.pid` -> matches `jellyfin.exe` listening on `:8096`
+  - `run\panel.pid` -> matches `pythonw.exe` listening on `:18080`
+- `netstat` shows **exactly one** `LISTENING` entry for each port: `8888`, `18099`, `18080`, and `8096` (no zombie duplicate listeners).
+
+---
+
+#### Phase 3: Gate probes return HTTP 200 & path existence
+Execute explicit HTTP status assertions on all endpoints:
+
+```powershell
+# 3.1 Path checks
+Test-Path -LiteralPath "F:\Media" # Must be True (GDrive)
+Test-Path -LiteralPath "T:\"      # Must be True (TorBox)
+
+# 3.2 HTTP 200 checks
+$endpoints = @(
+    @{ Name = 'TorboxProxy'; Url = 'http://127.0.0.1:8888/health' },
+    @{ Name = 'TorboxMyList';Url = 'http://127.0.0.1:8888/mylist' },
+    @{ Name = 'PotPlayerBridge'; Url = 'http://127.0.0.1:18099/health' },
+    @{ Name = 'JellyfinPublic';  Url = 'http://127.0.0.1:8096/System/Info/Public' },
+    @{ Name = 'ControlPanel';    Url = 'http://127.0.0.1:18080/health' }
+)
+foreach ($ep in $endpoints) {
+    try {
+        $res = Invoke-WebRequest -Uri $ep.Url -Method Get -TimeoutSec 5 -UseBasicParsing
+        [PSCustomObject]@{ Service = $ep.Name; StatusCode = $res.StatusCode; Status = 'PASS'; Url = $ep.Url }
+    } catch {
+        [PSCustomObject]@{ Service = $ep.Name; StatusCode = $_.Exception.Response.StatusCode.value__; Status = 'FAIL'; Url = $ep.Url }
+    }
+}
+```
+
+**Pass criteria:**
+- `Test-Path F:\Media` returns `True`.
+- `Test-Path T:\` returns `True`.
+- All 5 endpoints respond with `StatusCode: 200` and `Status: PASS`.
+- `/mylist` returns a valid JSON payload with cached torrents without 429 rate limit errors.
+
+---
+
+#### Phase 4: Jellyfin auth & post-restart views warming
+Verify Jellyfin virtual libraries and user views after cold boot:
+
+```powershell
+# 4.1 Unauthenticated + Authenticated Jellyfin stack status
+pwsh -File check_status.ps1 -AsJson
+$checkExit = $LASTEXITCODE
+
+# 4.2 User views check (after 60s library warming window)
+pwsh -File check_views_after_restart.ps1 -AsJson
+$viewsExit = $LASTEXITCODE
+
+Write-Host "Status check exit code: $checkExit (expected 0)"
+Write-Host "Views check exit code:  $viewsExit (expected 0)"
+```
+
+**Pass criteria:**
+- `check_status.ps1 -AsJson` returns `status: "OK"` and **`$LASTEXITCODE: 0`** (`libraryCount > 0`).
+- `check_views_after_restart.ps1 -AsJson` returns `status: "OK"` and **`$LASTEXITCODE: 0`** (`viewCount > 0`).
+  *(Note: Exit code `1` within the first 60 seconds of a cold boot indicates library scan warming; if still `1` after 60s, trigger `POST /Library/Refresh` via `check_user_views.ps1` and verify exit `0`).*
+
+---
+
+#### Phase 5: Watchdog silence (no retry noise, backoff, or crash alerts)
+Inspect the supervisor log for stability over at least two watchdog cycles (30 seconds):
+
+```powershell
+# 5.1 Tail recent watchdog cycles
+Select-String "WATCHDOG|ALERT|DEDUPE|GUARD|ABORT|GATE" F:\Jellyfin\logs\supervisor.log -Tail 50
+
+# 5.2 Assert no active error noise
+$bad = Select-String "ALERT|crash-loop|restart FAILED|ABORT" F:\Jellyfin\logs\supervisor.log -Tail 100
+if ($bad) {
+    Write-Host "[!] Found watchdog error noise in recent logs:" -ForegroundColor Red
+    $bad | Format-Table -AutoSize
+} else {
+    Write-Host "[+] Supervisor log is clean and stable. No retry noise or crash loops." -ForegroundColor Green
+}
+```
+
+**Pass criteria:**
+- `logs\supervisor.log` contains zero `ALERT ... crash-loop suspected` lines.
+- No `WATCHDOG <svc>: still down (fail #...)` or `backoff: waiting` loops.
+- No `ABORT:` lines from the start chain.
+- Dedupe and Guard logs show `single PID <pid> holds ... (netstat TCP table); no duplicates`.
+- Watchdog cycles report clean ticks or `recovered (fail counter reset)` with no flapping.
+
+---
+
+#### Phase 6: Playback integration smoke test
+Confirm the entire bridge, launcher, and player pipeline is operational:
+
+```powershell
+# 6.1 Verify DPL playlist generation without launching GUI
+pwsh -File test_dpl.ps1 -SkipLaunch
+
+# 6.2 Test MCP storage server
+pwsh -File test_mcp_server.ps1
+```
+
+**Pass criteria:**
+- `test_dpl.ps1 -SkipLaunch` exits with `0` errors.
+- `test_mcp_server.ps1` completes with all tools and prompts verified.
+
+---
+
+### Cold-restart validation summary checklist
+
+- [ ] **Logon task:** `MediaStackSupervisor` fired at logon; `supervisor.pid` holds active `pwsh.exe`.
+- [ ] **Mounts:** `F:\Media` (`RcloneGdriveMount` NSSM) and `T:\` (`mount-torbox.ps1`) both exist.
+- [ ] **Fresh PIDs:** `Status` table reports 6/6 `Healthy=True`, `PidAlive=True`, matching live PIDs.
+- [ ] **Listeners:** Exactly one process listening on `:8888`, `:18099`, `:8096`, and `:18080`.
+- [ ] **Gates 200:** `/health` on 8888, 18099, 18080, and `System/Info/Public` on 8096 all return HTTP 200.
+- [ ] **Jellyfin ready:** `check_status.ps1 -AsJson` exits `0`; `check_views_after_restart.ps1` exits `0`.
+- [ ] **Watchdog quiet:** No `ALERT`, `crash-loop`, `restart FAILED`, or flapping in `supervisor.log`.
+- [ ] **Playback:** `test_dpl.ps1 -SkipLaunch` and `test_mcp_server.ps1` pass cleanly.
+
+---
 
 ## 4. Log locations
 
