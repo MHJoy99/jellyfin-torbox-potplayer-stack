@@ -19,6 +19,24 @@
     pwsh -File install-all.ps1
 .EXAMPLE
     pwsh -File install-all.ps1 -Uninstall
+.NOTES
+    Rollback & Safety Policy:
+      1. Fail-fast execution: the orchestrator halts immediately upon the first
+         child installer failure ($LASTEXITCODE != 0), preventing partially
+         configured state from cascading into downstream steps.
+      2. Child rollback responsibility: each individual child installer manages
+         its own rollback ledger, creating timestamped .bak files for overwritten
+         assets, backing up modified registry keys via reg.exe export, and restoring
+         prior state if an unhandled exception occurs during its step.
+      3. Reverse-order uninstall: invoking with -Uninstall executes the identical
+         steps in exact reverse dependency order (panel -> lock -> wrapper ->
+         protocol -> MCP -> rclone service), cleanly unregistering services and
+         handlers without orphaned references.
+      4. Non-destructive cleanup: uninstallation removes created scheduled tasks,
+         registry protocol keys, service registrations, and version stamps; user
+         data, media files, and application logs are preserved.
+      5. Version stamp audit: post-execution audit inspects .install-versions/ for
+         expected *.version.json stamps, guaranteeing verifiable installation state.
 #>
 
 param (
