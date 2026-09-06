@@ -65,13 +65,44 @@ Idempotent guard: the script never restarts a healthy live mount. When the mount
 
 The TorBox mount enables rclone remote control on loopback port 5572. It is HTTP on `127.0.0.1` only, with no auth, which is safe only because it never leaves the machine. Do not rebind it to a LAN address or put it behind a tunnel.
 
-| Endpoint | Purpose | Who calls it |
-| --- | --- | --- |
-| `vfs/refresh` | Refreshes one stale directory without dropping the whole dir cache. | Launcher on a missing path, troubleshooting flow for stale listings. |
-| `vfs/cache/fetch` | Queues one file for full-file fetch into the VFS cache. | Launcher prefetch path before PotPlayer opens the file. |
-| `vfs/stats` | Returns VFS and disk-cache counters for the TorBox drive. | Panel TorBox health card. |
-| `core/stats` | Returns transfer counters. | MCP storage helper and diagnostics when RC is reachable. |
-| `mount/unmount` | Gracefully unmounts before a process stop. | Mount guard in `mount-torbox.ps1` when a stale mount must be replaced. |
+### Endpoint reference
+
+| Endpoint | Purpose | Who calls it | Request body |
+| --- | --- | --- | --- |
+| `rc/noop` | Liveness and connectivity check without modifying mount state. | Health checks, sync scripts, and preflight probes. | `{}` |
+| `vfs/refresh` | Refreshes one stale directory without dropping the whole dir cache. | Launcher on a missing path, troubleshooting flow for stale listings. | `{"dir": "<path>"}` or `{}` for full refresh |
+| `vfs/cache/fetch` | Queues one file for full-file fetch into the VFS cache. | Launcher prefetch path before PotPlayer opens the file. | `{"file": "<media-path>"}` |
+| `vfs/stats` | Returns VFS metadata and disk-cache counters for the TorBox drive. | Panel TorBox health card and metrics collectors. | `{}` |
+| `core/stats` | Returns real-time transfer counters and speed statistics. | MCP storage helper and diagnostics when RC is reachable. | `{}` |
+| `mount/unmount` | Gracefully unmounts the VFS mount before a process stop. | Mount guard in `mount-torbox.ps1` when replacing a stale mount. | `{"mountPoint": "T:"}` or `{}` |
+
+### `vfs/stats` example output
+
+The control panel queries `POST http://127.0.0.1:5572/vfs/stats` with an empty JSON body to compute live cache usage, cached item count, and directory metadata count:
+
+```json
+{
+  "diskCache": {
+    "bytesUsed": 4831838208,
+    "files": 14,
+    "uploads": 0,
+    "transforms": 0
+  },
+  "metadataCache": {
+    "dirs": 192,
+    "files": 1284
+  },
+  "inUse": 1,
+  "files": 14,
+  "bytesUsed": 4831838208
+}
+```
+
+Field interpretation:
+- `diskCache.bytesUsed`: Total bytes occupied on NVMe scratch disk by cached media chunks (parsed by panel as `bytes_used`).
+- `diskCache.files`: Number of media files currently holding cached chunks on disk.
+- `metadataCache.dirs` and `files`: Number of directory and file metadata nodes cached in memory for directory listings.
+- `inUse`: Number of files actively open with active read/write handles.
 
 Behavior notes:
 
@@ -85,6 +116,17 @@ Port and loopback conventions for the whole stack are in [Architecture](architec
 ## VFS cache tuning
 
 Tune in this order: footprint first, then freshness, then read performance, then API pacing. Change one knob at a time and re-check with a full-season play plus panel health from [Panel](panel.md).
+
+### VFS cache sizing and mode trade-offs
+
+Selecting the proper `--vfs-cache-mode` and sizing limits determines RAM, NVMe disk wear, and player seeking stability. The table below details the trade-offs:
+
+| Cache mode | RAM overhead | Disk usage | Seeking & random reads | Write support | Verdict for TorBox media stack |
+| --- | --- | --- | --- | --- | --- |
+| `off` | Minimal (<64 MB) | 0 GB (no disk caching) | Broken or extreme latency (re-downloads stream from 0 on seek) | Read-only | Not recommended: player seeks fail or stall on high-bitrate WebDAV streams. |
+| `minimal` | Low (<128 MB) | Minimal (only open files in read-and-write mode) | Fragile; simultaneous reads fail without complete chunks | Sequential only | Not recommended: does not cache read-only streams opened by PotPlayer. |
+| `writes` | Low (<128 MB) | Moderate (only files opened for writing) | Same as `minimal` for read-only playback | Full file buffered before upload | Not recommended: TorBox is primarily a read-only streaming remote. |
+| `full` **(Recommended)** | Controlled by `--buffer-size` (32 MB) | Bounded by `--vfs-cache-max-size` (25 GB on NVMe) | Instant seeking in cached ranges; sparse chunk downloads on jump | Full read/write with chunked download | **Production standard:** sparse file chunks enable instant scrub, smooth playback, and LRU age-out. |
 
 - Footprint: `max-size` bounds NVMe use and `max-age` bounds staleness of cached bytes. Raise `max-size` when concurrent plays evict each other; lower it when the cache disk fills. `min-free-space` is a floor, not a target — keep headroom for logs and transcodes and never set it to zero.
 - Freshness: `dir-cache-time` plus `attr-timeout` control how long listings are trusted. Shorter values show new torrents sooner but add listing load; longer values are snappier but hide new folders until expiry or an explicit `vfs/refresh`. The current fifteen-minute directory window with targeted refresh is the balance for a remote with no Changes feed. Do not return to hour- or day-scale caching and do not set the cache to zero globally — refresh the stale path instead, as described in [Architecture](architecture.md).
