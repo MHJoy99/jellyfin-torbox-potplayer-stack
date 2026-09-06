@@ -8,6 +8,9 @@ This reference collects the shared vocabulary, the security rules, and the backu
 - [Security](#security)
 - [Backup](#backup)
 - [Restore](#restore)
+- [Reproduction checklist for bug reports](#reproduction-checklist-for-bug-reports)
+- [Restore verification checklist](#restore-verification-checklist)
+- [Where to go next](#where-to-go-next)
 
 ## Glossary
 
@@ -108,6 +111,52 @@ Do not back up logs, cache, prefetch, transcodes, PID files, or CDN URLs, becaus
 
 Keep one tested restore note with your receipts so the next migration repeats the same order without guessing.
 
+## Reproduction checklist for bug reports
+
+Use this checklist before filing [a bug report](../.github/ISSUE_TEMPLATE/bug_report.md).
+It mirrors the template so evidence collected here pastes directly into the issue.
+
+- [ ] Searched existing issues plus [Troubleshooting](troubleshooting.md)
+      and [FAQ](faq.md) for the same symptom and error text.
+- [ ] Reproduced from a fresh terminal with live env secrets, using the
+      ordered start (`supervisor.ps1 -Mode Start`) and healthy mounts first.
+- [ ] Recorded minimal steps: exact command or click path plus the observed
+      intermediate state after each step.
+- [ ] Recorded frequency (`always` / `sometimes` / `once`) and what differs
+      between runs when intermittent.
+- [ ] Captured `pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE` with the
+      exit code (`0` healthy / `1` warming / `2` investigate).
+- [ ] Captured `pwsh -File supervisor.ps1 -Mode Forensics` output or the
+      relevant excerpts from `logs/supervisor.log`,
+      `logs/potplayer-launcher.log`, Jellyfin `data/log/`, or proxy `/metrics`.
+- [ ] Redacted every secret as `<redacted>` (keys, tokens, passwords,
+      `rclone.conf`, CDN tokens, env dumps) in logs and screenshots.
+
+## Restore verification checklist
+
+Run these after every restore from [Restore](#restore) before declaring
+the machine healthy. All commands run from the repo root.
+
+- [ ] `pwsh -File check_status.ps1` exits `0`.
+- [ ] `pwsh -File check_status.ps1 -AsJson` exits `0`.
+- [ ] `pwsh -File check_user_views.ps1 -AsJson` exits `0`
+      (wait ~60 s after a reboot scan when warming, then re-run).
+- [ ] `Invoke-RestMethod http://127.0.0.1:8888/health` and
+      `Invoke-RestMethod http://127.0.0.1:18080/health` both answer healthy.
+- [ ] One episode plays through [PotPlayer](potplayer.md) and tracker
+      progress reaches [Panel](panel.md).
+
+## Where to go next
+
+- New install or first playback: [Quickstart](quickstart.md), then [Install](install.md).
+- Symptom-to-fix steps: [Troubleshooting](troubleshooting.md); short answers: [FAQ](faq.md).
+- Health gates and bundles: [Supervisor](supervisor.md); cards and endpoints: [Panel](panel.md).
+- Rescued utilities: [Archive Rescue](rescued.md) (always rehearse with `--DryRun` / `--WhatIf`).
+- Filing or fixing: [Bug report](../.github/ISSUE_TEMPLATE/bug_report.md),
+  [Feature request](../.github/ISSUE_TEMPLATE/feature_request.md),
+  [Pull request template](../.github/pull_request_template.md),
+  [Support](../SUPPORT.md), [Contributing](../CONTRIBUTING.md).
+
 ---
 
-Back to [Docs Index](index.md).
+Back to [Docs Index](index.md) · Next: [Troubleshooting](troubleshooting.md) for fixes · [Quickstart](quickstart.md) to verify.

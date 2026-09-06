@@ -1,5 +1,9 @@
 # Archive Rescue — `archive/old-main-2026-08-21`
 
+> Part of the [Docs Index](index.md). Security rules: [Reference](reference.md#security).
+> Verify restores with [Reference checklists](reference.md#restore-verification-checklist);
+> fix symptoms with [Troubleshooting](troubleshooting.md).
+
 Rescued 3 stdlib-only tools from the old tree into `tools/rescued/` for the PUBLIC MIT repo.
 Read-only survey via `git show archive/old-main-2026-08-21:<path>` — no branch checkouts.
 Write scope strictly `tools/rescued/` + this index. Total new files: **4** (≤ 8 cap).
@@ -12,8 +16,10 @@ Write scope strictly `tools/rescued/` + this index. Total new files: **4** (≤ 
 - [Port #3 — rclone_cache_inspector](#port-3--toolsrescuedrclone_cache_inspectorpy-winner-3)
 - [Drop list — worst 5](#drop-list--worst-5-old-files)
 - [Intentionally left behind](#intentionally-left-behind)
+- [Reproduction and verification checklist](#reproduction-and-verification-checklist)
 - [Guardrails checklist](#guardrails-checklist)
 - [Final verdict — rescue ROI](#final-verdict--rescue-roi)
+- [Where to go next](#where-to-go-next)
 
 Live tree context: no `tools/` or `docs/` dir; live owns `supervisor.ps1` (1020-line watchdog),
 `check_status.ps1` (Nagios-style Jellyfin probe), `control-panel/` (stdlib web panel `:18080`),
@@ -141,6 +147,32 @@ File-cap (≤ 8) forced triage after the top-3. Left for follow-ups, not for lac
 - `scripts/NexusMediaMasterControl.ahk` + `docs/DESKTOP_AHK_AUTOMATION.md` — AHK runtime, superseded by supervisor.
 - `tools/benchmark_stack.py` + `docs/BENCHMARK_AND_PERFORMANCE.md`, `docs/*` (19 files), `web/*`, `deployments/*`, `config/*.template`, `mcp-servers/*`, `tests/*` — docs/configs superseded or niche; web needs DOM harness to verify; tests reference unrescued modules.
 
+## Reproduction and verification checklist
+
+Rehearse every rescued tool with the safe preview first, then the real
+command. Paste both outputs when filing
+[a bug report](../.github/ISSUE_TEMPLATE/bug_report.md).
+
+- [ ] `python -m py_compile` exits `0` for the tool touched.
+- [ ] `--help` prints without a traceback
+      (`python tools/rescued/<tool>.py --help`).
+- [ ] DryRun preview first: `--dry-run` / `--DryRun` / `--WhatIf`
+      prints what WOULD happen and writes nothing (no ffprobe call for
+      the analyzer, no POST for the notifier, no delete for the inspector).
+- [ ] Real run second (only after the preview looks right), with secrets
+      via env only (`DISCORD_WEBHOOK_URL`, `TMDB_API_KEY`,
+      `RCLONE_CACHE_DIR`, `FFPROBE_PATH`) and redacted as `<redacted>` in reports.
+- [ ] Secret scan clean: no keys, tokens, or webhook URLs in pasted output.
+
+Per-tool minimal repro:
+
+- Notifier: `python tools/rescued/discord_notifier.py --dry-run custom --title Hello --desc World`
+  must exit `0` with a JSON payload and no POST.
+- Analyzer: `python tools/rescued/media_quality_analyzer.py --DryRun ./Media --recursive`
+  must list files that WOULD be analyzed with no ffprobe invoked.
+- Inspector: `python tools/rescued/rclone_cache_inspector.py --DryRun --purge-all --older-than-days 30`
+  must print `WOULD-PURGE` / `SKIP-*` lines and delete nothing.
+
 ## Guardrails checklist
 
 - [x] Writes only under `tools/rescued/` + `docs/rescued.md` (4 files total, ≤ 8).
@@ -155,3 +187,13 @@ File-cap (≤ 8) forced triage after the top-3. Left for follow-ups, not for lac
 ## Final verdict — rescue ROI
 
 High ROI on 3 files, deliberate restraint on the rest: the old tree's unique value was not the Windows service plumbing (live `supervisor.ps1` + `control-panel` already supersede it) but the portable, stdlib-only media intelligence — Discord alerting, ffprobe quality scoring, and sparse-cache safety — none of which exist live. Those three port with near-zero dependency cost, env-only secrets, and DryRun-guarded writes, so they are safe to publish in a PUBLIC MIT repo and immediately useful to any Jellyfin operator. Everything else was correctly left: either duplicated live, superseded by the Windows-native design, blocked by non-stdlib deps, or too niche/hardware-specific to justify spending the 8-file budget. Rescue 3, document 10, drop 5 — the right trade.
+
+## Where to go next
+
+- Start: [Docs Index](index.md) · Verify: [Quickstart](quickstart.md) · Fix: [Troubleshooting](troubleshooting.md).
+- Safety: [Reference security](reference.md#security) and [reproduction checklist](reference.md#reproduction-checklist-for-bug-reports).
+- Report a rescued-tool defect with both DryRun and real outputs: [Bug report](../.github/ISSUE_TEMPLATE/bug_report.md).
+
+---
+
+Back to [Docs Index](index.md).
