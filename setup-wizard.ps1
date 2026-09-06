@@ -838,35 +838,50 @@ function Show-DryRunSummary {
     Show-Progress -Label 'Dry-run preview'
     Write-Host 'Nothing has been changed yet. Please review below, then choose Apply when ready.' -ForegroundColor White
     $lines = @()
-    $lines += 'ENVIRONMENT VARIABLES (saved to user profile + current session):'
-    $lines += '  TORBOX_API_KEY   = <masked, scope={0}> (from your masked entry; never saved to disk)' -f $script:State.TorboxScope
-    $lines += '  JELLYFIN_URL     = {0}' -f $script:State.JellyfinUrl
-    if ([string]::IsNullOrWhiteSpace($script:Secrets.JellyfinToken)) { $lines += '  JELLYFIN_API_KEY = <unchanged / not provided>' }
-    else { $lines += '  JELLYFIN_API_KEY = <masked token from your entry>' }
+    $lines += 'ACTIONS TO TAKE (APPLY STEP):'
+    $lines += '  1. Save TORBOX_API_KEY environment variable (scope={0}, user + current process)' -f $script:State.TorboxScope
+    $lines += '     Target: $env:TORBOX_API_KEY = <masked key; verified with TorBox API>'
+    $lines += '  2. Save JELLYFIN_URL environment variable'
+    $lines += '     Target: $env:JELLYFIN_URL = {0}' -f $script:State.JellyfinUrl
+    if ([string]::IsNullOrWhiteSpace($script:Secrets.JellyfinToken)) {
+        $lines += '  3. Save JELLYFIN_API_KEY environment variable -> [SKIP] no token provided (public info mode)'
+    } else {
+        $lines += '  3. Save JELLYFIN_API_KEY environment variable (user + current process)'
+        $lines += '     Target: $env:JELLYFIN_API_KEY = <masked token>'
+    }
     $single = '0'
     if ($script:State.PlaybackMode -eq 'Single') { $single = '1' }
-    $lines += '  POTPLAYER_SINGLE = {0}  (mode={1})' -f $single, $script:State.PlaybackMode
-    if ([string]::IsNullOrWhiteSpace($script:State.PotPlayerPath)) { $lines += '  POTPLAYER_PATH   = <not set>' }
-    else { $lines += '  POTPLAYER_PATH   = {0}' -f $script:State.PotPlayerPath }
+    $lines += '  4. Save POTPLAYER_SINGLE environment variable (playback mode={0})' -f $script:State.PlaybackMode
+    $lines += '     Target: $env:POTPLAYER_SINGLE = {0}' -f $single
+    if ([string]::IsNullOrWhiteSpace($script:State.PotPlayerPath)) {
+        $lines += '  5. Save POTPLAYER_PATH environment variable -> [SKIP] path not configured'
+    } else {
+        $lines += '  5. Save POTPLAYER_PATH environment variable (user + current process)'
+        $lines += '     Target: $env:POTPLAYER_PATH = {0}' -f $script:State.PotPlayerPath
+    }
     $lines += ''
-    $lines += 'LIBRARY DIRECTORIES (verified / created if missing):'
-    if ($script:State.LibraryRoots.Count -eq 0) { $lines += '  <none configured>' }
-    else {
+    $lines += 'LIBRARY DIRECTORIES (verified / created on apply):'
+    if ($script:State.LibraryRoots.Count -eq 0) {
+        $lines += '  <none configured> (add folders in step 2 if needed)'
+    } else {
         foreach ($p in $script:State.LibraryRoots) {
-            $tag = 'CREATE'
-            try { if (Test-Path -LiteralPath $p) { $tag = 'EXISTS' } } catch {}
+            $tag = 'CREATE DIRECTORY'
+            try { if (Test-Path -LiteralPath $p) { $tag = 'DIRECTORY EXISTS' } } catch {}
             $lines += '  [{0}] {1}' -f $tag, $p
         }
     }
     $lines += ''
-    $lines += 'MANAGED FILES (secrets always excluded):'
-    $lines += '  WRITE setup-answers.json (fast re-runs with -Resume or -NonInteractive)'
-    $lines += '  APPEND setup-wizard.log (redacted operational log)'
+    $lines += 'PERSISTED STATE & LOGGING:'
+    $lines += '  - WRITE setup-answers.json (saves non-secret configuration for -Resume and -NonInteractive)'
+    $lines += '  - BACKUP setup-answers.json -> setup-answers.json.bak-<timestamp> (if file already exists)'
+    $lines += '  - APPEND setup-wizard.log (records execution timestamps and outcomes with secrets redacted)'
     $lines += ''
-    $lines += 'READ-ONLY SERVICE CHECKS (no configuration changed):'
-    $lines += '  rclone.conf expected at: {0}' -f $script:State.RcloneConf
-    $lines += '  port probes: 8888 (proxy), 18099 (bridge), 18080 (panel), 8096 (Jellyfin)'
-    $lines += '  health probes: :8888/health, :18099/health, :18080/health, :8096/System/Info/Public'
+    $lines += 'POST-APPLY VALIDATION (READ-ONLY PROBES):'
+    $lines += '  - Probe port 8888  (torbox-proxy)       -> http://127.0.0.1:8888/health'
+    $lines += '  - Probe port 18099 (PotPlayer bridge)   -> http://127.0.0.1:18099/health'
+    $lines += '  - Probe port 18080 (control-panel)      -> http://127.0.0.1:18080/health'
+    $lines += '  - Probe port 8096  (Jellyfin server)    -> http://127.0.0.1:8096/System/Info/Public'
+    $lines += '  - Optional: Launch control panel in default web browser ({0})' -f $script:State.PanelUrl
     foreach ($ln in $lines) {
         if ($ln -match '^\S.*:$') { Write-Host $ln -ForegroundColor Cyan }
         elseif ($ln -match 'CREATE|NOT|missing') { Write-Host $ln -ForegroundColor Yellow }
