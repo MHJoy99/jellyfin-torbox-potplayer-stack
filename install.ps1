@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
     One-click installer for the NexusMedia Jellyfin stack (PUBLIC repo, MIT).
+    Run once from an elevated shell for a full install; re-run safely to upgrade.
 
 .DESCRIPTION
     Installs the Jellyfin + TorBox + PotPlayer stack in one step on stock
@@ -8,17 +9,32 @@
     .NET Framework/Core and inbox executables (reg.exe, schtasks.exe,
     icacls.exe). No extra modules are imported.
 
+    What it does, in order: checks elevation, detects required tools
+    (pwsh/python/node/rclone) with download links for anything missing,
+    prompts for TORBOX_API_KEY (masked-input option, Machine/User persist),
+    validates the key with a single TorBox API call, creates the
+    F:\Jellyfin layout (logs, cache, run, backups), registers the
+    potplayer:// protocol handlers, creates the MediaStackSupervisor
+    scheduled task, starts the supervisor once, health-checks ports
+    8888/18099/18080/8096, writes a redacted install receipt, and prints
+    a final summary with panel URL, next steps, and log locations.
+
+    Safe to re-run: detects an existing install (receipt/task/protocol) and
+    upgrades in place, backing up anything overwritten (.bak + exported .reg)
+    and rolling back on failure. Use -WhatIf first to preview every planned
+    action without changing anything.
+
     The 20 required behaviors (each marked [Req N] in the code):
-      1. -Uninstall switch removing everything it installed.
+      1. -Uninstall switch removing everything it installed (user data kept).
       2. -WhatIf dry-run printing all planned actions (no changes).
-      3. Admin check with friendly message (never a silent fail).
+      3. Admin check with friendly message and self-elevate offer (never a silent fail).
       4. Detect pwsh/python/node/rclone, print versions table, offer
          download links for anything missing.
       5. Prompt for TORBOX_API_KEY (masked input option) and offer
-         Machine/User scope persist.
-      6. Validate the key with one TorBox API call before continuing.
+         Machine/User scope persist (default Machine).
+      6. Validate the key with one TorBox API call before changing anything.
       7. Create F:\Jellyfin directory layout (logs, cache, run, backups).
-      8. Register potplayer:// protocol handler (potplayer + potplayer64).
+      8. Register potplayer:// protocol handler (potplayer + potplayer64, verified).
       9. Create MediaStackSupervisor scheduled task (or report the exact
          manual schtasks command when creation is skipped/fails).
      10. Start supervisor once (supervisor.ps1 -Mode Start) and verify.
@@ -29,10 +45,10 @@
      14. Write install receipt (version stamp + date + options JSON,
          key material NEVER written).
      15. -SkipTasks switch (files only, no scheduled tasks).
-     16. -Portable switch (no registry/task writes, current-dir mode).
+     16. -Portable switch (no registry/task writes, current-dir mode, no admin needed).
      17. Colored step output (green ok, yellow warn, red fail).
      18. Final summary screen: panel URL, next steps, log locations.
-     19. Log everything to install-<date>.log.
+     19. Log everything to install-<date>.log (BaseDir\logs, else script dir, else %TEMP%).
      20. Exit codes: 0 ok, 1 failed, 2 preflight failed.
 
     Secrets policy: TORBOX_API_KEY is read from the operator (or -TorboxApiKey
@@ -40,33 +56,85 @@
     NEVER written to the receipt, the log, or the repository. Logs and receipts
     record only key length / validation result / scope.
 
+.PARAMETER BaseDir
+    Install root. Default 'F:\Jellyfin'. When omitted with -Portable, uses the
+    script's own directory (current-dir mode).
+
+.PARAMETER TorboxApiKey
+    Optional prefill for automation. When omitted, the installer prompts
+    (masked). Find the key at https://torbox.app -> Settings -> API.
+
+.PARAMETER KeyScope
+    Where to persist TORBOX_API_KEY: Machine (default, all users, needs admin)
+    or User (current user only). Ignored in -Portable mode.
+
+.PARAMETER TaskName
+    Scheduled-task name. Default 'MediaStackSupervisor'.
+
+.PARAMETER PotPlayerExe
+    Optional hint path to PotPlayer.exe when auto-detection fails.
+
+.PARAMETER SupervisorScript
+    Optional override path to supervisor.ps1. Defaults to BaseDir, then script dir.
+
+.PARAMETER VersionDir
+    Where receipts and version stamps live. Defaults to BaseDir\.install-versions.
+
+.PARAMETER SkipTasks
+    Files/directories/registry only; create no scheduled task and do not start
+    services. Re-run without it later to finish setup.
+
+.PARAMETER Portable
+    Current-directory mode with no registry or scheduled-task writes and no
+    admin requirement. Key stays in session + portable.env only.
+
+.PARAMETER Uninstall
+    Remove installer artifacts (task, protocol keys, env key, receipt/stamp).
+    Media, data, and logs are never deleted.
+
+.PARAMETER NonInteractive
+    Never prompt; fail fast (exit 2 on preflight, error when key is missing).
+    Use with -TorboxApiKey for CI/automation.
+
+.PARAMETER ShowKeyInput
+    Show the API key while typing instead of masking it.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File install.ps1
     pwsh -File install.ps1
-    Interactive one-click install to F:\Jellyfin.
+    Interactive one-click install to F:\Jellyfin. Run elevated unless using
+    -Portable; you will be prompted for the TorBox key and key scope.
 
 .EXAMPLE
     pwsh -File install.ps1 -WhatIf
-    Dry-run: print every planned action, change nothing.
+    Dry-run: print every planned action, change nothing. Safe to run non-elevated.
 
 .EXAMPLE
     pwsh -File install.ps1 -Uninstall
-    Remove the task, protocol handlers, env key and receipt.
+    Remove the task, protocol handlers, env key, and receipt. Keeps media/data/logs.
 
 .EXAMPLE
     pwsh -File install.ps1 -SkipTasks
-    Files/directories/registry only; create no scheduled task.
+    Install files/directories/registry only; create no scheduled task. Start
+    services later with supervisor.ps1 -Mode Start, or re-run without -SkipTasks.
 
 .EXAMPLE
     pwsh -File install.ps1 -Portable
-    Current-directory mode; no registry or scheduled-task writes.
+    Current-directory mode; no registry or scheduled-task writes, no admin needed.
+    Key is kept in this session + portable.env only.
 
 .EXAMPLE
     pwsh -File install.ps1 -TorboxApiKey $env:TORBOX_API_KEY -KeyScope User -NonInteractive
-    Non-interactive install (automation); exits 2 on preflight failure.
+    Non-interactive install for automation/CI; exits 2 on preflight failure and
+    exits 1 when the key does not validate.
 
 .NOTES
-    Compatible: Windows PowerShell 5.1+ and PowerShell 7+. Stdlib only.
+    Compatible: Windows PowerShell 5.1+ and PowerShell 7+. Stdlib only, no modules.
+    Elevation: required for a full install (registry + Machine env + task); not needed
+      for -WhatIf, -Portable, or portable-mode uninstall.
+    Idempotent: re-running upgrades in place; backups (.bak/.reg) are kept for rollback.
+    Logs: install-<date>.log under BaseDir\logs (fallback: script dir, then %TEMP%).
+    Exit codes: 0 success, 1 install/validation failure, 2 preflight (not elevated/bad version).
     License: MIT. Repo: MHJoy99/jellyfin-torbox-potplayer-stack (PUBLIC).
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
