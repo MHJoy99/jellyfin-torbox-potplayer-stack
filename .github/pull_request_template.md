@@ -26,21 +26,48 @@ Base result:
 Fixed result:
 ```
 
-### Verification checklist
+### Testing and verification checklist
 
-- [ ] PowerShell parser gate passes with zero errors
-- [ ] `python -m py_compile` passes for every Python file touched
-- [ ] Tested on Windows (state PowerShell edition and elevation used)
-- [ ] Ordered start verified (`supervisor.ps1 -Mode Start` or Status)
-      with mounts healthy before Jellyfin, where applicable
-- [ ] `check_status.ps1` exit code recorded (`0` / `1` / `2`)
-- [ ] No secrets, tokens, or credentials in code, comments, or logs
-- [ ] Documentation updated (`README.md`, `RUNBOOK.md`, or `ARCHITECTURE.md`
-      as applicable; `docs/index.md` link updated when a guide is added,
-      renamed, or removed)
+Complete all applicable test items before requesting review.
 
-Paste the relevant command output (parser counts, `py_compile` result,
-`check_status.ps1` exit code) below:
+#### Static analysis & compilation
+- [ ] PowerShell syntax gate passes with zero errors:
+      `Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object { $err = $null; [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$err); if ($err) { throw $err } }`
+- [ ] Python syntax compile passes for all Python files:
+      `Get-ChildItem -Recurse -Filter *.py | ForEach-Object { python -m py_compile $_.FullName }`
+- [ ] Secret scan passes: no hardcoded API keys, tokens, bearer headers,
+      or cleartext passwords committed.
+
+#### Test suite & harness
+- [ ] Test harness passes: `pwsh -File tests/run-all-tests.ps1` (or individual
+      test scripts under `tests/`).
+- [ ] Contract tests pass: Panel static IDs and Proxy HTTP contracts verified.
+
+#### Runtime & smoke tests (Windows)
+- [ ] Tested on Windows (state PowerShell version and elevation level):
+      PowerShell version: <!-- $PSVersionTable.PSVersion --> | Elevated: Yes / No
+- [ ] Ordered start verified (`supervisor.ps1 -Mode Start` or Watchdog)
+      with mount health confirmed before Jellyfin starts.
+- [ ] Stack health status clean: `pwsh -File check_status.ps1 -AsJson` exits `0`.
+- [ ] User views sanity check: `pwsh -File check_user_views.ps1 -AsJson` exits `0`.
+- [ ] Endpoint smoke tests verified:
+  - [ ] `Invoke-RestMethod http://127.0.0.1:8888/health` (Proxy)
+  - [ ] `Invoke-RestMethod http://127.0.0.1:18080/health` (Control Panel)
+  - [ ] `Invoke-RestMethod http://127.0.0.1:8096/System/Info/Public` (Jellyfin)
+- [ ] End-to-end playback smoke test (if playback/launcher touched):
+      Played 1 test media item via `potplayer://` protocol link, verified
+      playlist generation and playback progress tracking tick.
+
+#### Documentation & Hygiene
+- [ ] Documentation updated (`README.md`, `RUNBOOK.md`, `ARCHITECTURE.md`,
+      or `CONTROL_PANEL.md` as applicable).
+- [ ] `docs/index.md` updated if any guide was added, renamed, or modified.
+- [ ] No temporary files, debug dumps, `.pyc`, or log bundles staged.
+
+### Verification output
+
+Paste the command output (parser counts, test runner summary, `py_compile`
+result, `check_status.ps1` output and exit code) below:
 
 ```text
 <paste verification output here>
