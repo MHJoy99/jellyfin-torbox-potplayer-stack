@@ -1,8 +1,8 @@
 # Keeps public docs portable: fails on machine-specific absolute paths
 # in *.md outside fenced code blocks.
 # Allowed (documented install roots): F:\Jellyfin*, F:\Media*, F:\TorboxMedia*,
-# T:\*, G:\*, R:\*. Everything else (C:\Users\..., E:\..., other drives) must live
-# inside ``` fences or be removed. Forensic incident logs are frozen history.
+# E:\MediaServer*, T:\*, G:\*, R:\*. Everything else (C:\Users\..., other drives)
+# must live inside ``` fences or be removed. Forensic incident logs are frozen history.
 # Usage: pwsh -File tests/test-no-absolute-paths.ps1
 # Exit 0 = no violations, 1 = violations found (prints FAIL <file>:<line>: <path>).
 # Skips .git / .kilo / worktrees / node_modules; see tests/README.md "Portable-path rule".
@@ -14,7 +14,7 @@ $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.md' -Error
     foreach ($fr in $frozen) { if ($_.Name -like "*$fr*") { return $false } }
     return $true
 })
-$allowedRoots = '^(F:\\(Jellyfin|Media|TorboxMedia)?|T:\\|G:\\|R:\\)(\\|$)'
+$allowedRoots = '^(F:\\(Jellyfin|Media|TorboxMedia)?|E:\\(MediaServer)?|T:\\|G:\\|R:\\)(\\|$)'
 $bad = 0
 foreach ($f in $files) {
     try { $lines = Get-Content -LiteralPath $f.FullName -ErrorAction Stop } catch { continue }

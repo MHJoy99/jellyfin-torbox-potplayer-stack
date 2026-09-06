@@ -56,7 +56,7 @@ node tests/test-js-syntax.js
 
 `test-no-absolute-paths.ps1` keeps public docs portable: outside
 code fences, only documented install roots are allowed
-(e.g., `F:\Jellyfin`, `F:\Media`, `F:\TorboxMedia`, `T:\`, `G:\`, `R:\`).
+(e.g., `F:\Jellyfin`, `F:\Media`, `F:\TorboxMedia`, `E:\MediaServer`, `T:\`, `G:\`, `R:\`).
 Put machine-specific examples inside fenced code blocks or remove them:
 
 ```text
@@ -66,6 +66,16 @@ C:\Users\Username\AppData\Local\...
 
 Forensic `GLOBAL_FIX_*` logs and `CONTROL_PANEL.md` are frozen history
 and skipped.
+
+## Latest Test Run Results
+
+```text
+> pwsh -File tests/test-no-absolute-paths.ps1
+no-absolute-paths: 33 md files checked, 0 violations
+
+> pwsh -File tests/test-no-secrets.ps1
+no-secrets: 0 code files checked, 0 violations
+```
 
 ## Line endings
 
