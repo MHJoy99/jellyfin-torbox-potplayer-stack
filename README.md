@@ -6,7 +6,12 @@
 [![Python: 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg)](https://www.python.org/)
 [![Jellyfin: 10.x](https://img.shields.io/badge/Jellyfin-10.x-00A4DC.svg)](https://jellyfin.org/)
 
-> Turn Jellyfin on Windows into a TorBox-powered 4K direct-stream powerhouse: cloud torrents mount as local drives, click Play in Jellyfin, and PotPlayer streams the full season instantly — with resume sync, no transcoding, and a one-click web control panel.
+> Jellyfin library + TorBox cloud + PotPlayer playback — on Windows, with no transcoding.
+>
+> Cloud torrents mount as local drives (`T:\`), Jellyfin keeps metadata, resume, and Next-Up, and PotPlayer direct-streams full-season 4K through a local proxy. A loopback-only panel owns start/stop, health, and Play-in-PotPlayer.
+>
+> **Scope:** Windows 10/11 x64 only · Jellyfin 10.x + TorBox + PotPlayer x64 + rclone VFS · PowerShell 7+ + Python 3.11 · Loopback-only by default.
+> **Not in scope:** Linux / macOS / Docker, Plex / Emby, remote hosting. Google Drive sync is optional secondary; TorBox is the primary cloud. Caddy / tunnel edge is roadmap, not current.
 
 ## Table of Contents
 
@@ -18,7 +23,8 @@
 - [⚙️ Configuration](#️-configuration)
 - [▶️ Usage — Play an Episode End-to-End](#️-usage--play-an-episode-end-to-end)
 - [📸 Screenshots](#-screenshots)
-- [🆚 Comparison — Why Not Plain Jellyfin, Plex, or Infuse?](#-comparison--why-not-plain-jellyfin-plex-or-infuse)
+- [🆚 Comparison — Why Not Plain Jellyfin, Plex, or Plex+Debrid?](#-comparison--why-not-plain-jellyfin-plex-or-plexdebrid)
+- [🚀 Performance Notes & Tuning](#-performance-notes--tuning)
 - [🛠️ Troubleshooting](#️-troubleshooting)
 - [❓ FAQ](#-faq)
 - [🗺️ Roadmap](#️-roadmap)
@@ -29,14 +35,22 @@
 
 ## ⚡ 30-Second Quickstart
 
-Get from zero to playing in under a minute (after prerequisites are installed):
+For a fresh PC with prerequisites already installed (PotPlayer x64, rclone + WinFsp, Python 3.11, Jellyfin 10.x files, TorBox account). Pick one path:
+
+**A — One-click (recommended):**
 
 ```powershell
 git clone https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack.git
 cd jellyfin-torbox-potplayer-stack
-$env:TORBOX_API_KEY = "<your-torbox-key>"  # session-only, never committed
-pwsh -File install-all.ps1
+pwsh -File install.ps1 -WhatIf
+pwsh -File install.ps1
 ```
+
+`install.ps1` prompts for `TORBOX_API_KEY` (masked), validates it once, installs to `F:\Jellyfin`, registers `potplayer://`, creates the supervisor task, starts the stack, and health-checks `:8888` / `:18099` / `:18080` / `:8096`. Options (`-SkipTasks`, `-Portable`, `-Uninstall`) and receipts are in `docs/install.md`.
+
+**B — Guided:** `pwsh -File setup-wizard.ps1` for step-by-step key, library, Jellyfin, PotPlayer, rclone, and port checks with a dry-run before anything changes.
+
+**C — Manual (advanced):** `pwsh -File install-all.ps1` runs the six installers in dependency order, then `pwsh -File supervisor.ps1 -Mode Start` does one ordered start (mounts → proxy → bridge → Jellyfin → panel). Full order and verify steps are in `docs/install.md` and `docs/quickstart.md`.
 
 Then open the panel:
 
@@ -44,22 +58,22 @@ Then open the panel:
 http://127.0.0.1:18080
 ```
 
-Click **Start all**, wait for all services green, open Jellyfin at `http://127.0.0.1:8096`, press Play → PotPlayer opens the full season. Done.
+Click **Start all**, wait for green, open Jellyfin at `http://127.0.0.1:8096`, use Play-in-PotPlayer → the full-season playlist opens at your resume point. Done.
 
-> 🔐 Secrets live only in environment variables (`$env:TORBOX_API_KEY`). This repo is public MIT — never paste keys into files, issues, or commits.
+> 🔐 Secrets live only in environment variables (`$env:TORBOX_API_KEY`, placeholder value `<your-torbox-key>`). This repo is public MIT — never paste keys into files, issues, or commits.
 
 ## ✨ Features
 
-| Feature | What It Does | Service / Script |
+| Feature | What it does for you | Service / Script |
 |---|---|---|
-| TorBox Proxy | Caches TorBox `mylist`, mints fresh CDN 302s per request, token-bucket rate limiting, `/metrics` for Prometheus | `server/torbox-proxy.py` (`:8888`) |
-| Resume Sync | POSTs playback progress to Jellyfin every 5s, marks Played at 80%, drives Next-Up | `potplayer-sync-tracker.ps1` |
-| Watch Console | Live tail of launcher + playback ticks, episode hints, and 80% played events | `show-playback-log.ps1` |
-| Supervisor | Ordered start chain + 15s watchdog with backoff, single-instance mutex, PID files | `supervisor.ps1`, `Start-Jellyfin.ps1`, `Stop-Jellyfin.ps1` |
-| Control Panel | Start/stop/restart mounts, proxy, bridge, Jellyfin; status, metrics, Play-in-PotPlayer buttons; loopback-only | `control-panel/control_panel.py` (`:18080`) |
-| GDrive Sync | Writes `.strm` + sidecars from Google Drive into Jellyfin, triggers `POST /Library/Refresh` | `gdrive-library-sync.ps1` |
+| TorBox proxy | Stable local URLs that never expire; refreshes short-lived CDN links per request and caches `mylist` to stay fast | `server/torbox-proxy.py` (`:8888`) |
+| One-click play | Jellyfin Play hands a `potplayer://` link to Windows; the launcher picks the right file, refreshes stale cache, and opens the full season at your resume point | `potplayer-launcher.ps1` + bridge `:18099` |
+| Resume sync | Posts progress every 5s, marks Played at 80% so Next-Up keeps working on every client | `potplayer-sync-tracker.ps1` |
+| Watch console | Live tail of launcher + playback ticks, episode hints, and 80% Played events | `show-playback-log.ps1` |
+| Control panel | Loopback-only Start/Stop/Restart, status, metrics, and Play buttons — no console juggling | `control-panel/control_panel.py` (`:18080`) |
+| Supervisor | Ordered start (mounts → proxy → bridge → Jellyfin → panel) plus watchdog, mutex, and PID files | `supervisor.ps1` (`-Mode Run` / `Start` / `Stop` / `Status`) |
 
-Extras: `potplayer://` protocol handler with full-season `.dpl` playlists and `/seek=` resume, stale-VFS auto-refresh, `FULLCACHE=1` full-file prefetch bar, Nagios-style `check_*.ps1` health probes (`-AsJson`), and an rclone MCP bridge under `mcp-servers/`.
+Optional / secondary: Google Drive `.strm` sync (`gdrive-library-sync.ps1`), `FULLCACHE=1` full-file prefetch for a solid seek bar, full-season `.dpl` with `/seek=` resume, Nagios-style `check_*.ps1` probes (`-AsJson`), and an rclone MCP bridge under `mcp-servers/`.
 
 ## 🏗️ Architecture
 
@@ -163,16 +177,42 @@ See [RUNBOOK.md](RUNBOOK.md) for rotation (env + registry → restart proxy/supe
 
 Capture rules (full checklist in `assets/screenshots/PLACEHOLDER.md`): PNG ≤ 1600 px wide, maximized window, cropped chrome, demo library only, blur tokens, hostnames, and private titles before saving. Name files exactly as above so future embeds stay stable.
 
-## 🆚 Comparison — Why Not Plain Jellyfin, Plex, or Infuse?
+## 🆚 Comparison — Why Not Plain Jellyfin, Plex, or Plex+Debrid?
 
-| Capability | This Stack | Plain Jellyfin | Plex | Infuse |
+An honest comparison across media setups on Windows:
+
+| Capability | This Stack (Jellyfin + TorBox + PotPlayer) | Plain Jellyfin on Windows | Plex (Standard / Plex Pass) | Plex + Debrid / Zurg / Infuse |
 |---|---|---|---|---|
-| TorBox cloud torrents as local drives | ✅ rclone VFS `T:\` + proxy CDN refresh | ❌ manual downloads | ❌ no native TorBox | ⚠️ via WebDAV only, no 302 refresh |
-| 4K REMUX direct-play on Windows | ✅ PotPlayer + full-season `.dpl`, no transcode | ⚠️ browser/ExoPlayer limits, often transcodes | ⚠️ Plex transcodes without Plex Pass / tuned client | ✅ direct-play, but Apple-only |
-| Resume + Next-Up stay in sync externally | ✅ 5s tracker, 80% Played, Next-Up advances | ❌ external players break resume | ❌ external players break resume | ⚠️ iCloud sync only |
-| One-click local ops panel | ✅ `:18080` Start/Stop/Restart + metrics + playback | ❌ dashboard only, no process control | ❌ server settings only | ❌ no server panel |
-| Self-hosted, no account lock-in, MIT | ✅ Windows + Jellyfin + rclone, all local | ✅ fully self-hosted | ❌ account + paywalled features | ❌ paid Pro, Apple ecosystem |
-| Best for | Windows cinephiles wanting Jellyfin library + PotPlayer playback + TorBox cloud | General self-hosters OK with web playback | Remote sharing with Plex clients | Apple TV / iOS direct-play |
+| Primary cloud storage | TorBox cloud torrents/Usenet mounted to `T:\` via rclone VFS with auto-refresh | Local storage or plain mounts; manual torrent management | Local storage; cloud requires unsupported third-party tools | Real-Debrid / TorBox via Zurg/WebDAV/rclone |
+| 4K REMUX direct-play on Windows | ✅ PotPlayer x64 + full-season `.dpl`, hardware decoding, no transcoding overhead | ⚠️ Web/ExoPlayer client codec limits often trigger CPU-heavy server transcoding | ⚠️ Direct-play requires tuned desktop app; Web client transcodes HDR/high-bitrate | ✅ Direct-play on supported players (Infuse on Apple, desktop player on PC) |
+| Resume & Next-Up sync | ✅ 5s tracker posts to Jellyfin `/Sessions/Playing/Progress`, marks Played at 80% | ✅ Native when using built-in web/app clients; ❌ broken with external players | ✅ Native in Plex clients; ❌ broken with external players | ⚠️ Dependent on sync scrobbler / webhook bridges; Infuse uses iCloud |
+| Stale link & CDN expiry resilience | ✅ Local proxy (`:8888`) mints fresh CDN 302s on demand; never fails on expired links | N/A | N/A | ⚠️ Stale debrid links in `.strm` require whole-library rescans or fail playback |
+| Control & operations panel | ✅ Dedicated loopback panel (`:18080`) with Start/Stop/Restart, metrics, and health gates | ❌ Server dashboard only (no service watchdog or mount lifecycle control) | ❌ Server settings only | ❌ Scattered scripts / CLI-only management |
+| Supervision & watchdog | ✅ Supervisor mutex, ordered start chain, 15s watchdog, backoff, and PID tracking | ❌ Windows Service / manual process only | ❌ Manual tray / service launcher | ❌ Requires separate NSSM / Docker supervision |
+| Portability & license | ✅ MIT licensed, loopback-only, env-based secrets, zero telemetry lock-in | ✅ Open-source (GPL) | ❌ Proprietary, requires Plex account & telemetry, paid Plex Pass for HW transcode | ⚠️ Mix of paid services, proprietary players (Infuse), and community scripts |
+| Ideal user | Windows cinephiles wanting an open Jellyfin library + instant 4K PotPlayer streaming from TorBox | Self-hosters with local storage playing via official Jellyfin web/mobile apps | Non-technical households wanting polished turnkey apps on TVs and mobile | Multi-device users wanting cloud debrid with Apple TV / multi-client setups |
+
+## 🚀 Performance Notes & Tuning
+
+The stack is pre-tuned for high-bitrate 4K streaming over residential gigabit connections. Key tuning knobs and defaults:
+
+### 1. rclone VFS Mount (`mount-torbox.ps1`)
+
+- **Cache mode:** `--vfs-cache-mode full` — allows sparse caching on disk so seeking does not stall the entire stream.
+- **Cache sizing:** `--vfs-cache-max-size 25G` with `--vfs-cache-max-age 12h` and `--vfs-cache-min-free-space 30G`. Keep the cache directory on an NVMe SSD for instant chunk access.
+- **Chunk reads:** `--vfs-read-chunk-size 32M` (starts small for fast TTFB) doubling up to `--vfs-read-chunk-size-limit 256M` with `--vfs-read-ahead 128M` for smooth scrubbing.
+- **Directory caching:** `--dir-cache-time 15m` with `--attr-timeout 5m` keeps Windows Explorer and Jellyfin library scans responsive. Stale paths are refreshed on-demand via rclone RC (`:5572`).
+
+### 2. Local Proxy (`server/torbox-proxy.py` on `:8888`)
+
+- **Link resolution:** Proxy mints fresh CDN download links via 302 redirects with a token-bucket rate limiter, avoiding TorBox API rate limits.
+- **Shared cache:** Caches `mylist` for 10 minutes with singleflight coalescing to eliminate redundant API roundtrips during multi-episode season loads.
+- **HTTP protocol:** Uses HTTP/1.0 progressive streaming by default to prevent client connection hangs when upstream CDN response lengths vary.
+
+### 3. Seek Bar & Prefetch
+
+- **Instant seek:** PotPlayer receives progressive HTTP streams directly from the proxy, allowing instant seeking across the timeline.
+- **Full prefetch (optional):** Set `$env:FULLCACHE = "1"` before launch to trigger background full-file caching for a solid seek bar on ultra-high-bitrate REMUX files.
 
 ## 🛠️ Troubleshooting
 
