@@ -1,4 +1,11 @@
 name: CI
+# Pinned actions (resolved 2026-09-06 via `git ls-remote <repo> refs/tags/<tag>`):
+# - actions/checkout@v4.2.2        -> 11bd71901bbe5b1630ceea73d27597364c9af683
+# - actions/setup-python@v5.5.0    -> 8d9ed9ac5c53483de85588cdf95a591a75ab9f55
+# - actions/setup-node@v4.4.0      -> 49933ea5288caeca8642d1e84afbd3f7d6820020
+# - actions/upload-artifact@v4.6.2 -> ea165f8d65b6e75b540449e92b4886f43607fa02
+# Same majors as before (no behavior change); SHA pin prevents tag-repoint supply-chain attacks.
+# Windows hardening: pwsh-only, @() array wrapping (0/1/N files), exclude .git/__pycache__/node_modules, quote paths with spaces.
 "on":
   push:
     branches:
@@ -39,13 +46,16 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Parse all PowerShell files
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = Get-ChildItem -Recurse -Filter *.ps1 -File
-          if ($null -eq $files -or $files.Count -eq 0) {
+          # @() ensures Count works for 0/1/N files; exclude .git on Windows runner.
+          $files = @(Get-ChildItem -Recurse -Filter *.ps1 -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' })
+          if ($files.Count -eq 0) {
             Write-Host 'No PowerShell files found'
             'No PowerShell files found' | Out-File -FilePath ps1-parse.log -Encoding utf8
             exit 0
@@ -55,7 +65,7 @@ jobs:
             $tokens = $null
             $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
-            if ($errors.Count -gt 0) {
+            if (@($errors).Count -gt 0) {
               Write-Host ('FAIL ' + $f.FullName)
               foreach ($e in $errors) {
                 Write-Host ($f.FullName + ':' + $e.Extent.StartLineNumber + ':' + $e.Extent.StartColumnNumber + ' ' + $e.Message)
@@ -81,7 +91,7 @@ jobs:
           '| ps1-parse | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ps1-parse-logs
           path: ps1-parse.log
@@ -101,17 +111,20 @@ jobs:
           - '3.12'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55 # v5.5.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Compile all Python files
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $files = Get-ChildItem -Recurse -Filter *.py -File
-          if ($null -eq $files -or $files.Count -eq 0) {
+          # Exclude .git and __pycache__; quote paths so spaces on Windows do not split arguments.
+          $files = @(Get-ChildItem -Recurse -Filter *.py -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]__pycache__[\\/]' })
+          if ($files.Count -eq 0) {
             Write-Host 'No Python files found'
             'No Python files found' | Out-File -FilePath python-compile.log -Encoding utf8
             exit 0
@@ -119,7 +132,7 @@ jobs:
           $failed = @()
           foreach ($f in $files) {
             Write-Host ('Compiling ' + $f.FullName)
-            python -m py_compile $f.FullName
+            python -m py_compile "$($f.FullName)"
             if ($LASTEXITCODE -ne 0) {
               Write-Host ('FAIL ' + $f.FullName)
               $failed += $f.FullName
@@ -143,7 +156,7 @@ jobs:
           '| python-compile | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: python-compile-logs
           path: python-compile.log
@@ -163,9 +176,11 @@ jobs:
           - '22'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ matrix.node-version }}
       - name: Check JavaScript syntax
@@ -173,8 +188,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host 'Checking app.js-level files with node --check'
-          $files = Get-ChildItem -Recurse -Filter *.js -File
-          if ($null -eq $files -or $files.Count -eq 0) {
+          # Exclude .git and node_modules; quote paths so spaces on Windows do not split arguments.
+          $files = @(Get-ChildItem -Recurse -Filter *.js -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' -and $_.FullName -notmatch '[\\/]node_modules[\\/]' })
+          if ($files.Count -eq 0) {
             Write-Host 'No JavaScript files found'
             'No JavaScript files found' | Out-File -FilePath js-syntax.log -Encoding utf8
             exit 0
@@ -182,7 +198,7 @@ jobs:
           $failed = @()
           foreach ($f in $files) {
             Write-Host ('Checking ' + $f.FullName)
-            node --check $f.FullName
+            node --check "$($f.FullName)"
             if ($LASTEXITCODE -ne 0) {
               Write-Host ('FAIL ' + $f.FullName)
               $failed += $f.FullName
@@ -206,7 +222,7 @@ jobs:
           '| js-syntax | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: js-syntax-logs
           path: js-syntax.log
@@ -222,21 +238,23 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Flag absolute local paths in Markdown
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Write-Host 'Flagging absolute local paths like F:\ or C:\ inside md'
-          $files = Get-ChildItem -Recurse -Filter *.md -File
-          if ($null -eq $files -or $files.Count -eq 0) {
+          $files = @(Get-ChildItem -Recurse -Filter *.md -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' })
+          if ($files.Count -eq 0) {
             Write-Host 'No Markdown files found'
             'No Markdown files found' | Out-File -FilePath markdown-links.log -Encoding utf8
             exit 0
           }
           $pattern = '[A-Za-z]:\\'
-          $found = Select-String -Path ($files.FullName) -Pattern $pattern -ErrorAction SilentlyContinue
-          if ($null -ne $found) {
+          $found = @(Select-String -Path $files.FullName -Pattern $pattern -ErrorAction SilentlyContinue)
+          if ($found.Count -gt 0) {
             Write-Host ($found.Count.ToString() + ' absolute local path match(es) found')
             foreach ($m in $found) {
               Write-Host ('::warning file=' + $m.Path + ',line=' + $m.LineNumber + '::Absolute local path ' + $m.Line.Trim())
@@ -266,7 +284,7 @@ jobs:
           '| markdown-links | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: markdown-links-logs
           path: markdown-links.log
@@ -282,24 +300,32 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Scan for hardcoded secrets
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $pattern = 'ghp_[A-Za-z0-9]{20,}|-----BEGIN PRIVATE KEY-----|TORBOX_API_KEY\s*=\s*[''\"\"][A-Za-z0-9\-_\.]{8,}[''\"\"]|api\.torbox\.app.*token=[A-Za-z0-9\-_\.]{20,}'
-          $files = Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\.git\\' }
-          $raw = Select-String -Path ($files.FullName) -Pattern $pattern -ErrorAction SilentlyContinue
+          # Exclude .git so history objects are never scanned; @() keeps Count correct for 0/1/N.
+          $files = @(Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' })
+          if ($files.Count -eq 0) {
+            Write-Host 'No files to scan'
+            'No files to scan' | Out-File -FilePath no-secrets.log -Encoding utf8
+            exit 0
+          }
+          $raw = @(Select-String -Path $files.FullName -Pattern $pattern -ErrorAction SilentlyContinue)
           # Allowlist doc placeholders (README/HINT examples) so the scan only fires on real-looking values (2026-09-05).
-          $hits = $raw | Where-Object { ($_.Line -notmatch '\$pattern') -and ($_.Line -notmatch 'paste-your|your-torbox-key|<your-|example|placeholder|changeme|xxx+') }
-          $count = @($hits).Count
-          if ($null -ne $hits -and $count -gt 0) {
+          # Also skip this workflow's own $pattern definition line so the scanner does not flag itself.
+          $hits = @($raw | Where-Object { ($_.Line -notmatch '\$pattern') -and ($_.Line -notmatch 'paste-your|your-torbox-key|<your-|example|placeholder|changeme|xxx+') })
+          if ($hits.Count -gt 0) {
             foreach ($h in $hits) {
               Write-Host ('::error file=' + $h.Path + ',line=' + $h.LineNumber + '::Potential secret match')
               Write-Host ($h.Path + ':' + $h.LineNumber + ':' + $h.Line.Trim())
             }
             $hits | ForEach-Object { $_.Path + ':' + $_.LineNumber + ':' + $_.Line } | Out-File -FilePath no-secrets.log -Encoding utf8
-            Write-Host ($count.ToString() + ' potential secret(s) found')
+            Write-Host ($hits.Count.ToString() + ' potential secret(s) found')
             exit 1
           }
           Write-Host 'No secrets found'
@@ -314,7 +340,7 @@ jobs:
           '| no-secrets | pass |' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: no-secrets-logs
           path: no-secrets.log
@@ -337,7 +363,9 @@ jobs:
     if: always()
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
       - name: Show repository status
         shell: pwsh
         run: |
@@ -364,7 +392,7 @@ jobs:
           ('| Branch | ${{ github.ref_name }} |') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload failure logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: status-logs
           path: '*.log'
