@@ -19,7 +19,7 @@ Follows seasonal shows with absolute ordering, specials, and subtitles.
 
 - Goals: correct episode order, fast Next-Up, reliable subtitles.
 - How this helps: metadata matching for seasons and specials, full-season
-  queues, frequent progress sync, and a subtitle pipeline with docs.
+  queues, frequent progress sync, and preserved audio/subtitle tracks on direct play.
 - Tips: name specials clearly, verify order after each sync, and keep a
   small test library for new subtitle styles.
 
@@ -49,6 +49,6 @@ Enjoys logs, metrics, scripts, and automating the boring parts.
 
 - Goals: observable services, scriptable maintenance, room to extend.
 - How this helps: Prometheus metrics, JSON health output, an automation
-  bridge with strict validation, a client SDK, and assert-based smoke tests.
+  bridge with strict validation, curated inspection tools, and assert-based smoke tests.
 - Tips: start with dry-run flags, bundle a health report with every bug
   report, and prototype new panel actions as small scripts first.
