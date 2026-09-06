@@ -1,6 +1,10 @@
-# Launch kit
+# NexusMedia Jellyfin Stack — Launch Kit
 
-How to introduce this stack without spamming, and how fans can help it grow.
+How to introduce the NexusMedia Jellyfin Stack without spamming, and how fans can help it grow.
+
+Brand rules are authoritative in `assets/BRAND.md` (Naming, Misuse rules,
+no binary blobs). This kit reuses its badge snippet, Open Graph strings,
+and banner verbatim — do not restyle them per venue.
 
 ## Where to announce
 
@@ -20,25 +24,29 @@ release notes rather than reposting the same text everywhere.
 
 ## Tailored pitches
 
+Each pitch uses the full **NexusMedia Jellyfin Stack** name on first
+mention (per `assets/BRAND.md` Naming). Keep that first mention intact
+when trimming for length.
+
 ### r/jellyfin pitch
 
-I open-sourced a Jellyfin stack that keeps large libraries direct-played through PotPlayer with one-click season queues, resume seeking, and progress sync back to Jellyfin, plus a local proxy with Range support and a small panel for status and playback, and I would love feedback on library sync and Next-Up accuracy.
+I open-sourced the NexusMedia Jellyfin Stack, which keeps large libraries direct-played through PotPlayer with one-click season queues, resume seeking, and progress sync back to Jellyfin, plus a local proxy with Range support and a small panel for status and playback, and I would love feedback on library sync and Next-Up accuracy.
 
 ### r/selfhosted pitch
 
-I published a self-hosted media stack built around Jellyfin with a local proxy that hides short-lived links behind stable URLs, a watchdog that keeps services in order, JSON health checks and Prometheus metrics, preview-first maintenance scripts, and a local-only panel, all MIT licensed with a runbook for recovery.
+I published the NexusMedia Jellyfin Stack, a self-hosted media stack built around Jellyfin with a local proxy that hides short-lived links behind stable URLs, a watchdog that keeps services in order, JSON health checks and Prometheus metrics, preview-first maintenance scripts, and a local-only panel, all MIT licensed with a runbook for recovery.
 
 ### r/PotPlayer pitch
 
-I built an open bridge that sends a full Jellyfin season to PotPlayer as an ordered queue with resume seeking and pause-aware progress sync, so the player bar fills fully and Next-Up stays correct, and the launcher handles stale listings and fallback streams automatically.
+I built the NexusMedia Jellyfin Stack bridge, which sends a full Jellyfin season to PotPlayer as an ordered queue with resume seeking and pause-aware progress sync, so the player bar fills fully and Next-Up stays correct, and the launcher handles stale listings and fallback streams automatically.
 
 ### Jellyfin forum pitch
 
-This guide and toolkit shows a complete Jellyfin setup with cloud mounts, stream-file sync, a local proxy for stable seeking, PotPlayer queues with resume, a control panel for status and logs, and health scripts for daily checks, with architecture and runbook docs included for troubleshooting.
+This NexusMedia Jellyfin Stack guide and toolkit shows a complete Jellyfin setup with cloud mounts, stream-file sync, a local proxy for stable seeking, PotPlayer queues with resume, a control panel for status and logs, and health scripts for daily checks, with architecture and runbook docs included for troubleshooting.
 
 ### General self-hosted forum pitch
 
-If you like owning your media chain, this MIT stack pairs Jellyfin with an external player, a caching proxy, and a local panel, focusing on direct-play quality, clear logs, and safe defaults, and the roadmap lists small ways to contribute even without coding.
+If you like owning your media chain, the NexusMedia Jellyfin Stack (MIT) pairs Jellyfin with an external player, a caching proxy, and a local panel, focusing on direct-play quality, clear logs, and safe defaults, and the roadmap lists small ways to contribute even without coding.
 
 ## Star CTA copy variants
 
@@ -64,16 +72,28 @@ You do not need to code to move this project forward.
 Please be kind, stay on topic, and play only files you own or have the right
 to play.
 
+## Brand rules for launch assets
+
+- Name: full **NexusMedia Jellyfin Stack** on first mention; `NexusMedia`
+  wordmark is never re-typeset (scale `assets/logo.svg` as a unit).
+- Banner: `assets/social-preview.svg` (1200×630, dark-first) for OG / X
+  cards. Do not use it below **600 px** wide — use `assets/favicon.svg`.
+  Alt: `NexusMedia Jellyfin Stack banner — title, tagline and Windows, PowerShell, MIT badges on dark background`.
+- No binary blobs: never commit PNG / JPG / ICO / WOFF for launch posts.
+  Screenshots follow `assets/screenshots/PLACEHOLDER.md` (attach to
+  releases / issues, do not commit). Full misuse list: `assets/BRAND.md`.
+
 ## Badges block for README
+
+Canonical block — verbatim from `assets/BRAND.md`. Do not restyle colors
+or add extra badges here; brand-token colors only.
 
 Copy and paste this block at the top of README.md:
 
 ```markdown
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/MHJoy99/jellyfin-torbox-potplayer-stack.svg)](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows-blue.svg)](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack)
-[![PowerShell](https://img.shields.io/badge/powershell-7-blue.svg)](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack)
-[![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-38D6C0.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-4F8CFF.svg)](#setup)
+[![PowerShell](https://img.shields.io/badge/powershell-5.1%2B-5391FE.svg)](supervisor.ps1)
 ```
 
 ## Release-notes template
@@ -140,3 +160,8 @@ follow whatever plan you already have with your provider.
 
 The goal is to avoid it. Direct-play through the external player plus Range
 seeking keeps large files original quality on capable hardware.
+
+---
+
+Launch Kit v1.1 — 2026-09-06. Companion to `assets/BRAND.md` v1.1.
+v1.1: canonical title, full-name first mentions, canonical badges verbatim from BRAND.md, brand-rules + no-binary-blobs section.

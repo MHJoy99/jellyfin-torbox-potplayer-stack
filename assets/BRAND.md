@@ -1,7 +1,23 @@
-# NexusMedia Jellyfin Stack — Brand v1.0
+# NexusMedia Jellyfin Stack — Brand v1.1
 
 Original brand marks for the public repo. No third-party logos
 (Jellyfin / TorBox / PotPlayer marks are **not** reproduced here).
+
+Authoritative usage rules for `assets/` + `LAUNCH-KIT.md`.
+`assets/social-snippet.md` reuses the same Open Graph / X strings below.
+
+## Naming (canonical)
+
+- Full name: **NexusMedia Jellyfin Stack** — use on first mention in docs,
+  pitches, banners, `og:title` / `twitter:title`, and alt text.
+- Short name: **NexusMedia** — wordmark only; never re-typeset it in
+  another typeface, always scale the SVG as a unit.
+- Descriptors (`Jellyfin stack`, `media stack`, `bridge`, `toolkit`) are
+  never standalone names on first mention.
+- File names are kebab-case under `assets/`: `logo.svg`,
+  `logo-dark.svg`, `favicon.svg`, `social-preview.svg`,
+  `favicon-snippet.html`, `social-snippet.md`. Snippets are copy-paste
+  helpers — they never ship as live panel files.
 
 ## Files
 
@@ -9,7 +25,7 @@ Original brand marks for the public repo. No third-party logos
 |---|---|---|
 | `assets/logo.svg` | Default logo for **light** backgrounds | `NexusMedia Jellyfin Stack logo — play button over stacked layers beside the NexusMedia wordmark` |
 | `assets/logo-dark.svg` | Variant for **dark** backgrounds | `NexusMedia Jellyfin Stack logo, light-text variant for dark backgrounds` |
-| `assets/favicon.svg` | Simplified mark / browser tab icon | `NexusMedia stack mark — play button over a stack layer` |
+| `assets/favicon.svg` | Simplified mark / browser tab icon | `NexusMedia Jellyfin Stack mark — play button over a stack layer` |
 | `assets/social-preview.svg` | 1200×630 social banner (vector text) | `NexusMedia Jellyfin Stack banner — title, tagline and Windows, PowerShell, MIT badges on dark background` |
 
 Copy-paste helpers (no live files touched):
@@ -34,6 +50,9 @@ Copy-paste helpers (no live files touched):
 | `muted` | `#9AA8C3` | Secondary tagline line |
 | `muted-light` | `#C4CFE6` | Primary tagline line on dark |
 | `white` | `#FFFFFF` | Play triangle |
+
+Hex is canonical **uppercase**. The panel `theme-color` may appear as
+lowercase `#070b12` in HTML — same color, keep `#070B12` in docs/SVG.
 
 Contrast notes: `ink on white ≈ 15.9:1`; `paper on bg-deep ≈ 14.5:1`;
 `accent-deep on white ≈ 4.6:1` (body-text safe); plain `accent` is
@@ -73,20 +92,41 @@ SVG `<text>` uses the same stack so banners render without external fonts.
 4. Don't stretch, rotate, outline, or rearrange the play/stack lockup.
 5. Don't place the default logo on dark backgrounds (use `logo-dark.svg`).
 6. Don't use the banner below **600 px** wide — use `favicon.svg` instead.
+7. Don't commit binary blobs — SVGs stay source-only (see rule below).
+8. Don't rename the project on first mention — use the full
+   **NexusMedia Jellyfin Stack** name (see Naming above).
+
+## Repository rule: no binary blobs
+
+- Source of truth is hand-written SVG (`viewBox`-based, valid XML,
+  **< 20 KB** each). No PNG / JPG / ICO / WOFF committed anywhere under
+  `assets/` (or repo root for brand purposes).
+- Optional local-only exports stay **untracked**: export `favicon.svg`
+  at 16 / 32 / 180 px (or `social-preview.svg` at 1200×630 PNG) to
+  `%TEMP%` for testing, never `git add` them. The PNG links in
+  `assets/favicon-snippet.html` are optional fallbacks, not repo files.
+- Screenshots are never committed: `assets/screenshots/PLACEHOLDER.md`
+  is the shot list + capture how-to. Attach real captures to
+  releases / issues instead so `git log -- assets/*.png` stays empty.
+- Verify any time (xmlns namespace is the only allowed `http` string):
+  `Select-String -Path assets/*.svg -Pattern '<image| href=|xlink:href'`
+  must return no matches, and `git status --porcelain` must show no
+  `.png/.jpg/.ico/.woff` under `assets/`.
 
 ## SVG technical notes
 
 - All SVGs are hand-written, valid XML, `viewBox`-based (scale freely).
-- No `<image>`, no `href`/`xlink:href`, no `http` URLs, no embedded raster.
+- No `<image>`, no `href` / `xlink:href` attributes, no embedded raster.
+  The only `http` string is the required SVG `xmlns` namespace.
 - Each SVG is **< 20 KB** (verified sizes listed below; re-check with
-  `Get-ChildItem assets/*.svg`).
+  `Get-ChildItem assets/*.svg | Select-Object Name,Length`).
 
-Verified 2026-09-04 (see commit message for hashes):
+Verified 2026-09-06 (byte sizes on disk):
 
-- `logo.svg`: 1295 bytes
-- `logo-dark.svg`: 1321 bytes
-- `favicon.svg`: 916 bytes
-- `social-preview.svg`: 2713 bytes
+- `logo.svg`: 1308 bytes
+- `logo-dark.svg`: 1334 bytes
+- `favicon.svg`: 927 bytes
+- `social-preview.svg`: 3190 bytes
 
 ## Favicon sizes note
 
@@ -97,6 +137,8 @@ Verified 2026-09-04 (see commit message for hashes):
   and reference per `assets/favicon-snippet.html`. Keep the SVG as source.
 
 ## Open Graph strings (copy-paste)
+
+Same strings as `assets/social-snippet.md` — keep them in sync.
 
 ```text
 og:title = NexusMedia Jellyfin Stack
@@ -114,7 +156,10 @@ twitter:description = TorBox to PotPlayer in one local stack — Jellyfin + TMDB
 twitter:image = assets/social-preview.svg
 ```
 
-## README badges snippet (copy-paste)
+## README badges snippet (copy-paste, canonical)
+
+This block is canonical — `LAUNCH-KIT.md` reuses it verbatim.
+Brand-token colors only (`38D6C0` / `4F8CFF` / `5391FE`), no extra badges.
 
 ```markdown
 [![License: MIT](https://img.shields.io/badge/License-MIT-38D6C0.svg)](LICENSE)
@@ -135,4 +180,5 @@ Paste at the end of `README.md` or under `## Notes`.
 
 ---
 
-Brand v1.0 — 2026-09-04. Original marks, MIT (same as repo `LICENSE`).
+Brand v1.1 — 2026-09-06. Original marks, MIT (same as repo `LICENSE`).
+v1.1: canonical Naming section, explicit no-binary-blobs rule, favicon alt-text fix, re-verified SVG byte sizes, uppercase-hex note, LAUNCH-KIT cross-reference.

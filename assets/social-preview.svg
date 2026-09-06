@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- NexusMedia Jellyfin Stack — social preview 1200x630 (vector text, dark-first). -->
+<!-- Use: repo social banner / og:image source. Rules: assets/BRAND.md (Naming, Misuse, no binary blobs). -->
+<!-- Vector-only: no embedded raster or external references; system font stack only (Inter, 'Segoe UI', system-ui). -->
+<!-- Alt: NexusMedia Jellyfin Stack banner — title, tagline and Windows, PowerShell, MIT badges on dark background. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-labelledby="spTitle spDesc">
   <title id="spTitle">NexusMedia Jellyfin Stack social preview</title>
-  <desc id="spDesc">1200 by 630 banner: dark background, play-over-stack mark, title NexusMedia Jellyfin Stack and tagline about TorBox to PotPlayer local streaming.</desc>
+  <desc id="spDesc">1200 by 630 dark-first banner: NexusMedia title, JELLYFIN STACK subhead, TorBox-to-PotPlayer tagline, and Windows, PowerShell, MIT badges. Original vector mark, no embedded images.</desc>
   <rect x="0" y="0" width="1200" height="630" fill="#070B12"/>
   <rect x="0" y="0" width="1200" height="10" fill="#4F8CFF"/>
   <rect x="0" y="620" width="1200" height="10" fill="#38D6C0"/>
