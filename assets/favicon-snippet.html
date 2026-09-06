@@ -1,10 +1,17 @@
-<!-- Copy-paste favicon block for the web control panel. -->
+<!-- NexusMedia Jellyfin Stack — favicon snippet v1.1 (copy-paste, no live files touched). -->
+<!-- Rules: assets/BRAND.md is authoritative (Naming, Misuse rules, no binary blobs). -->
 <!-- WHERE TO PASTE: control-panel/index.html, inside <head>, -->
 <!-- right after the <meta name="theme-color" ...> line. -->
-<!-- STEP 1: copy assets/favicon.svg to control-panel/favicon.svg (same folder as index.html). -->
+<!-- STEP 1 (required): copy assets/favicon.svg to control-panel/favicon.svg -->
+<!-- (same folder as index.html) and expose it at /favicon.svg, next to the -->
+<!-- existing /app.css and /app.js static routes in control-panel/control_panel.py. -->
+<!-- Until that route exists, keep the current inline data-URI icon in index.html. -->
 <!-- STEP 2: replace the existing inline data-URI <link rel="icon" ...> line with this block. -->
 <!-- STEP 3: reload http://127.0.0.1:18080 and check the tab icon at 16px and 32px. -->
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<!-- PNG fallbacks below are OPTIONAL and LOCAL-ONLY: export assets/favicon.svg -->
+<!-- at 32 / 180 px to %TEMP% for testing if needed. Do NOT commit .png / .ico -->
+<!-- anywhere under assets/ — SVGs stay source-only (no binary blobs). -->
+<link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg">
 <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#070b12">
+<meta name="theme-color" content="#070B12">
