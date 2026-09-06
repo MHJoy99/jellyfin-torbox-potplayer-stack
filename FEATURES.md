@@ -40,5 +40,8 @@ observable, without re-encoding everything on a home server.
 - Storage automation bridge with an allowlisted, validated command surface.
 - Nagios-style health checks with JSON output for monitoring.
 - Assert-based smoke tests for playlists and the automation bridge.
-- Webhook notifications for ingest events, cache alerts, and backups.
-- Client SDK, quality analyzer, cache inspector, and telemetry exporter.
+- Rescued curation tools: Discord webhook notifications (`tools/rescued/discord_notifier.py`),
+  media quality analyzer (`tools/rescued/media_quality_analyzer.py`), and rclone
+  cache inspector (`tools/rescued/rclone_cache_inspector.py`).
+- 9-suite regression test harness (`tests/run-tests.ps1`) covering syntax, secrets,
+  contracts, and dry runs.

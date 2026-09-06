@@ -2,6 +2,23 @@
 
 Where this stack is heading. Items are checked off as they land in CHANGELOG.md.
 
+Current state: `VERSION` is `1.0.0` with no new tag cut. Work since
+v1.0.0 lives under `[Unreleased]` in CHANGELOG.md (one-click installer,
+setup wizard, 12-file docs site, CI pipeline, 9-suite test harness,
+rescued curation tools, mount guard). Nothing below invents a release;
+v1.1 / v1.2 / v2.0 are future planning milestones.
+
+## Landed in Unreleased (ready for next release tag)
+
+- [x] One-click installer `install.ps1` with 20 behaviors (PowerShell 5.1 & 7 stdlib).
+- [x] Interactive first-run setup wizard `setup-wizard.ps1` with resume and headless modes.
+- [x] 12-file complete documentation site under `docs/`.
+- [x] Automated Windows CI and secret scanning workflows.
+- [x] 9-suite regression test harness (`tests/run-tests.ps1`).
+- [x] Rescued curation tools: Discord notifier, media quality analyzer, cache inspector (`tools/rescued/`).
+- [x] Idempotent TorBox mount guard in `mount-torbox.ps1` preventing supervisor kill-loops.
+- [x] Release automation toolkit (`release.ps1` + `LAUNCH-KIT.md`).
+
 ## Now (v1.1)
 
 - [ ] Control panel playback timeline export (CSV) for personal watch history.
@@ -15,13 +32,16 @@ Where this stack is heading. Items are checked off as they land in CHANGELOG.md.
 - [ ] Proxy cache-hit dashboard tiles inside the control panel metrics view.
 - [ ] Scheduled backup and database vacuum with retention settings.
 - [ ] Cross-platform launcher research for portable playback outside Windows.
+- [ ] Stdlib subtitle normalizer and organizer (`tools/sub_sync_organizer.py` port).
+- [ ] Stdlib metrics exporter (`scripts/export-metrics.ps1` port).
 
 ## Later (v2.0 and beyond)
 
-- [ ] One-click install package with preflight checks and clean uninstall.
+- [ ] One-click GUI installer with preflight checks and clean uninstall.
 - [ ] Offline-first metadata cache for faster library browsing during outages.
 - [ ] Read-only mobile companion view for status and Next-Up.
 - [ ] Community translation workflow for panel and docs (see LAUNCH-KIT.md).
+- [ ] Stdlib Jellyfin API SDK (`sdk/jellyfin_sdk.py` stdlib rewrite).
 
 ## Screenshot requests for v1.1
 
