@@ -186,8 +186,8 @@ function Read-PlainValidated {
             if (($raw -eq 'q') -or ($raw -eq 'Q')) { return @{ Value = $null; Quit = $true; Back = $false } }
             if (($raw -eq 'back') -or ($raw -eq 'b') -or ($raw -eq 'B')) { return @{ Value = $null; Quit = $false; Back = $true } }
             if ([string]::IsNullOrEmpty($raw) -and (-not $AllowEmpty)) {
-                Write-Warn 'Value is required. Type a value, or q to quit / back to go back.'
-                if ($HelpText) { Write-Info $HelpText }
+                Write-Warn 'A value is required. Enter a value, or type back to return / q to quit.'
+                if ($HelpText) { Write-Info ('Hint: {0}' -f $HelpText) }
                 continue
             }
             if ($Validate) {
@@ -195,9 +195,9 @@ function Read-PlainValidated {
                 $ok = $false
                 try { $ok = & $Validate $raw ([ref]$err) } catch { $ok = $false; $err = $_.Exception.Message }
                 if (-not $ok) {
-                    if ([string]::IsNullOrWhiteSpace($err)) { $err = 'Invalid value.' }
-                    Write-Warn ('{0} Please try again (q to quit, back to go back).' -f $err)
-                    if ($HelpText) { Write-Info $HelpText }
+                    if ([string]::IsNullOrWhiteSpace($err)) { $err = 'Invalid value entered.' }
+                    Write-Warn ('{0} (type back to return, q to quit)' -f $err)
+                    if ($HelpText) { Write-Info ('Hint: {0}' -f $HelpText) }
                     continue
                 }
             }
@@ -334,7 +334,8 @@ function Invoke-TorboxStep {
             continue
         }
         $choice = Read-PlainValidated -Prompt 'TorBox scope: [1] Machine 24/7 host (default) / [2] User personal account' -Default '1' -AllowEmpty $false `
-            -Validate { param($v, [ref]$e) if ($v -match '^[12]$|(?i)^(machine|user)$') { return $true }; $e.Value = 'Enter 1/Machine or 2/User.'; return $false }
+            -Validate { param($v, [ref]$e) if ($v -match '^[12]$|(?i)^(machine|user)$') { return $true }; $e.Value = 'Invalid choice. Enter 1 for Machine or 2 for User.'; return $false } `
+            -HelpText '1 (Machine) stores to system scope; 2 (User) stores to current user profile'
         if ($choice.Quit) { return $false }
         if ($choice.Back) { return $true }
         $scope = 'Machine'
@@ -362,13 +363,13 @@ function Invoke-TorboxStep {
 #region F4 Library roots editor
 function Test-LibraryRootValid {
     param([string]$Path, [ref]$Err)
-    if ([string]::IsNullOrWhiteSpace($Path)) { $Err.Value = 'Path is empty.'; return $false }
+    if ([string]::IsNullOrWhiteSpace($Path)) { $Err.Value = 'Path cannot be empty.'; return $false }
     if ($Path -match '[<>:"|?*]') {
         # Allow drive-letter colon (F:\) but reject other illegal chars.
         $tmp = $Path -replace '^[A-Za-z]:\\', ''
-        if ($tmp -match '[<>:"|?*]') { $Err.Value = 'Path contains illegal characters (<>:"|?*).'; return $false }
+        if ($tmp -match '[<>:"|?*]') { $Err.Value = 'Path contains invalid filesystem characters (<>:"|?*).'; return $false }
     }
-    if ($Path.Length -lt 3) { $Err.Value = 'Path looks too short (e.g. F:\TorboxMedia).'; return $false }
+    if ($Path.Length -lt 3) { $Err.Value = 'Path too short. Provide a full path like F:\TorboxMedia.'; return $false }
     return $true
 }
 function Invoke-LibraryStep {
@@ -417,7 +418,8 @@ function Invoke-LibraryStep {
         if (($cmd -eq 'l') -or ($cmd -eq 'list')) { continue }
         if (($cmd -eq 'a') -or ($cmd -eq 'add')) {
             $got = Read-PlainValidated -Prompt 'Enter new library folder path (example: F:\TorboxMedia)' -Default '' -AllowEmpty $false `
-                -Validate { param($v, [ref]$e) return (Test-LibraryRootValid -Path $v -Err $e) }
+                -Validate { param($v, [ref]$e) return (Test-LibraryRootValid -Path $v -Err $e) } `
+                -HelpText 'Absolute local folder path (e.g. F:\TorboxMedia or D:\Media\Movies)'
             if ($got.Quit) { return $false }
             if ($got.Back) { continue }
             $np = $got.Value
@@ -431,7 +433,8 @@ function Invoke-LibraryStep {
         if (($cmd -eq 'r') -or ($cmd -eq 'remove')) {
             if ($script:State.LibraryRoots.Count -eq 0) { Write-Warn 'Nothing to remove.'; continue }
             $got = Read-PlainValidated -Prompt ('Number to remove (1-{0})' -f $script:State.LibraryRoots.Count) -Default '' -AllowEmpty $false `
-                -Validate { param($v, [ref]$e) if ($v -match '^\d+$') { return $true }; $e.Value = 'Enter the row number.'; return $false }
+                -Validate { param($v, [ref]$e) if ($v -match '^\d+$') { return $true }; $e.Value = 'Invalid row number. Enter digits only.'; return $false } `
+                -HelpText ('Select a list item number from 1 to {0}' -f $script:State.LibraryRoots.Count)
             if ($got.Quit) { return $false }
             if ($got.Back) { continue }
             $n = 0
@@ -477,9 +480,9 @@ function Invoke-JellyfinStep {
             if ([Uri]::TryCreate($v, [UriKind]::Absolute, [ref]$u)) {
                 if (($u.Scheme -eq 'http') -or ($u.Scheme -eq 'https')) { return $true }
             }
-            $e.Value = 'Enter a full URL like http://127.0.0.1:8096.'
+            $e.Value = 'Invalid server URL format. Must start with http:// or https://.'
             return $false
-        } -HelpText 'Example: http://127.0.0.1:8096'
+        } -HelpText 'Must be a valid HTTP/HTTPS endpoint (e.g. http://127.0.0.1:8096 or http://localhost:8096)'
     if ($gotUrl.Quit) { return $false }
     if ($gotUrl.Back) { return $true }
     $script:State.JellyfinUrl = $gotUrl.Value.Trim().TrimEnd('/')
@@ -611,7 +614,8 @@ function Invoke-PotPlayerStep {
     if (-not [string]::IsNullOrWhiteSpace($script:State.PotPlayerPath)) {
         Write-Info ('Current selection: {0}' -f $script:State.PotPlayerPath)
     }
-    $got = Read-PlainValidated -Prompt 'Press Enter to keep current, type a list number, or paste full .exe path (back returns to menu)' -Default '' -AllowEmpty $true
+    $got = Read-PlainValidated -Prompt 'Press Enter to keep current, type a list number, or paste full .exe path (back returns to menu)' -Default '' -AllowEmpty $true `
+        -HelpText 'Leave blank to keep current, type 1/2/... from candidate list above, or enter full path like C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe'
     if ($got.Quit) { return $false }
     if ($got.Back) { return $true }
     $v = $got.Value.Trim()
@@ -816,7 +820,8 @@ function Invoke-PlaybackStep {
     $def = '1'
     if ($script:State.PlaybackMode -eq 'Single') { $def = '2' }
     $got = Read-PlainValidated -Prompt 'Playback mode: [1] FullSeason whole season (default) / [2] Single one episode' -Default $def -AllowEmpty $false `
-        -Validate { param($v, [ref]$e) if ($v -match '^[12]$') { return $true }; $e.Value = 'Enter 1 or 2.'; return $false }
+        -Validate { param($v, [ref]$e) if ($v -match '^[12]$') { return $true }; $e.Value = 'Invalid playback selection. Enter 1 for FullSeason or 2 for Single.'; return $false } `
+        -HelpText '1 = queues all season episodes in PotPlayer; 2 = launches clicked item only'
     if ($got.Quit) { return $false }
     if ($got.Back) { return $true }
     if ($got.Value -eq '2') { $script:State.PlaybackMode = 'Single' }
@@ -833,7 +838,7 @@ function Show-DryRunSummary {
     Show-Progress -Label 'Dry-run preview'
     Write-Host 'Nothing has been changed yet. Please review below, then choose Apply when ready.' -ForegroundColor White
     $lines = @()
-    $lines += 'ENV (user + process):'
+    $lines += 'ENVIRONMENT VARIABLES (saved to user profile + current session):'
     $lines += '  TORBOX_API_KEY   = <masked, scope={0}> (from your masked entry; never saved to disk)' -f $script:State.TorboxScope
     $lines += '  JELLYFIN_URL     = {0}' -f $script:State.JellyfinUrl
     if ([string]::IsNullOrWhiteSpace($script:Secrets.JellyfinToken)) { $lines += '  JELLYFIN_API_KEY = <unchanged / not provided>' }
@@ -844,23 +849,23 @@ function Show-DryRunSummary {
     if ([string]::IsNullOrWhiteSpace($script:State.PotPlayerPath)) { $lines += '  POTPLAYER_PATH   = <not set>' }
     else { $lines += '  POTPLAYER_PATH   = {0}' -f $script:State.PotPlayerPath }
     $lines += ''
-    $lines += 'LIBRARY DIRECTORIES (created if missing):'
-    if ($script:State.LibraryRoots.Count -eq 0) { $lines += '  <none>' }
+    $lines += 'LIBRARY DIRECTORIES (verified / created if missing):'
+    if ($script:State.LibraryRoots.Count -eq 0) { $lines += '  <none configured>' }
     else {
         foreach ($p in $script:State.LibraryRoots) {
             $tag = 'CREATE'
-            try { if (Test-Path -LiteralPath $p) { $tag = 'exists' } } catch {}
+            try { if (Test-Path -LiteralPath $p) { $tag = 'EXISTS' } } catch {}
             $lines += '  [{0}] {1}' -f $tag, $p
         }
     }
     $lines += ''
-    $lines += 'FILES:'
-    $lines += '  WRITE setup-answers.json (answers only, secrets excluded)'
-    $lines += '  APPEND setup-wizard.log (this run, secrets redacted)'
+    $lines += 'MANAGED FILES (secrets always excluded):'
+    $lines += '  WRITE setup-answers.json (fast re-runs with -Resume or -NonInteractive)'
+    $lines += '  APPEND setup-wizard.log (redacted operational log)'
     $lines += ''
-    $lines += 'CHECKS ONLY (no changes):'
+    $lines += 'READ-ONLY SERVICE CHECKS (no configuration changed):'
     $lines += '  rclone.conf expected at: {0}' -f $script:State.RcloneConf
-    $lines += '  ports probed: 8888 / 18099 / 18080 / 8096'
+    $lines += '  port probes: 8888 (proxy), 18099 (bridge), 18080 (panel), 8096 (Jellyfin)'
     $lines += '  health probes: :8888/health, :18099/health, :18080/health, :8096/System/Info/Public'
     foreach ($ln in $lines) {
         if ($ln -match '^\S.*:$') { Write-Host $ln -ForegroundColor Cyan }
@@ -1136,7 +1141,8 @@ function Invoke-OpenPanelOptIn {
         return
     }
     $got = Read-PlainValidated -Prompt ('Open the control panel {0} in your browser now? [y/N]' -f $script:State.PanelUrl) -Default 'N' -AllowEmpty $false `
-        -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Enter Y or N.'; return $false }
+        -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Invalid choice. Enter Y to open browser or N to skip.'; return $false } `
+        -HelpText 'Y launches your default browser to the web panel; N leaves it to open manually'
     if ($got.Quit) { return }
     if ($got.Back) { return }
     if ($got.Value -match '(?i)^y') {
@@ -1236,8 +1242,9 @@ function Invoke-WizardMain {
     }
     # Finish path: final dry-run -> confirm -> apply -> health -> browser -> save -> goodbye.
     Show-DryRunSummary
-    $confirm = Read-PlainValidated -Prompt 'Review above. Apply these changes now? [Y/n]' -Default 'Y' -AllowEmpty $false `
-        -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Enter Y or N.'; return $false }
+    $confirm = Read-PlainValidated -Prompt 'Review summary above. Apply these changes now? [Y/n]' -Default 'Y' -AllowEmpty $false `
+        -Validate { param($v, [ref]$e) if ($v -match '(?i)^y(es)?$|^n(o)?$') { return $true }; $e.Value = 'Invalid choice. Enter Y to apply or N to skip.'; return $false } `
+        -HelpText 'Y applies environment variables and folders; N skips straight to saving answers'
     if ($confirm.Quit) { return 0 }
     if (-not $confirm.Back) {
         if ($confirm.Value -match '(?i)^y') {
