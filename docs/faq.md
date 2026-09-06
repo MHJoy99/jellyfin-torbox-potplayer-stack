@@ -1,6 +1,6 @@
 # Frequently Asked Questions
 
-This FAQ answers the twenty most common questions in full sentences so each answer stands alone in search results.
+This FAQ answers the thirty most common questions in full sentences so each answer stands alone in search results.
 
 ## Contents
 
@@ -92,3 +92,43 @@ After a reboot, the control panel returns on its own after sign-in because it is
 ### 20. Why are Jellyfin views empty right after a reboot and when should I worry?
 
 Jellyfin views are often empty right after a reboot because the library is still warming and the post-restart probe reports warming rather than failure, so the correct response is to wait about sixty seconds, re-run the views probe, and trigger a library refresh when warming is reported. Worry only when the probe reports investigate instead of warming, which points at scans, mounts, or logs rather than timing. The usual root cause is Jellyfin starting before the mounts were healthy, since a missing or warming VFS mount produces stub streams or missing views that a rescan cannot fix until the mount paths are browsable again. Status output plus the forensics bundle should be collected before restarting a crash loop, because restarts rotate evidence. Warming versus investigate codes are in [Jellyfin](jellyfin.md), symptom fixes are in [Troubleshooting](troubleshooting.md), and forensics timing is in [Supervisor](supervisor.md).
+
+### 21. Which Windows scheduled tasks belong to this stack and how are they managed?
+
+The scheduled tasks belonging to this stack are the per-user logon task for the control panel and the periodic synchronization tasks for TorBox and Google Drive library sync, while long-running services like the proxy, bridge, Jellyfin, and TorBox mount intentionally avoid task-scheduler supervision. The TorBox sync task runs on a thirty-minute schedule and shares its single-instance mutex with manual panel clicks, while the Drive sync task runs periodically to scan cloud remotes, update local `.strm` media files, and trigger library refreshes. Task installation and audit receipts are detailed in [Install](install.md), panel sync button wiring is in [Panel](panel.md), and recovery steps for missing tasks are in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 22. Why are the synchronization tasks excluded from supervisor watchdog restarts?
+
+The synchronization tasks are excluded from supervisor watchdog restarts because they are periodic batch jobs that execute run-to-completion passes under global mutex guards rather than continuous HTTP listeners or file-system daemons. Supervising them as continuous daemons would falsely treat normal run completions as process exits and spawn unnecessary restart loops that contend with active sync runs. The supervisor focuses strictly on the six core long-running services in the ordered chain, while sync tasks retain their independent schedules and status logging. The supervisor scope is defined in [Supervisor](supervisor.md), service definitions are in [Architecture](architecture.md), and task logs are listed in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 23. How does the control panel autostart without showing a console window?
+
+The control panel autostarts at user logon because its installer registers a per-user scheduled task configured to run quietly in the background using the windowless Python executable without creating a terminal window. The installer also places a standard shortcut in the Start Menu for quick browser access and audits the resulting version stamp so upgrades preserve existing settings in place. If the task fails to trigger or the web interface is unavailable after sign-in, the installer can be re-run safely to recreate the task definition and verify loopback reachability. Autostart setup is explained in [Install](install.md) and [Panel](panel.md), and diagnostic steps are documented in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 24. What should I do if the Drive mount does not autostart after a system reboot?
+
+If the Drive mount does not autostart after a system reboot, you should verify whether the underlying service wrapper is running and check whether the media folder path has become browsable before starting downstream services. When the service is stopped or missing, you start the mount service or invoke the fallback mount script directly, allow up to thirty seconds for the virtual file system to initialize, and confirm that the directory is readable. Starting Jellyfin while the mount is still down must be avoided because Jellyfin would index empty folders or generate broken stream stubs. The reboot checklist and mount requirements are covered in [Supervisor](supervisor.md) and [Install](install.md), and symptom-to-fix instructions are in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 25. How do I detect if Google Drive library sync has become stale or failed?
+
+You can detect if Google Drive library sync has become stale or failed by inspecting the panel timeline for sync error counts over the last twenty-four hours, checking the sync state JSON file for recent completion timestamps, and examining the sync heartbeat log for consecutive failures. If the sync has stalled or error counts exceed warning thresholds, re-running a self-test or validation pass confirms whether cloud remote credentials and path mappings remain healthy without writing destructive changes. The Drive sync state file and log rotation paths are documented in [Architecture](architecture.md) and [Panel](panel.md), while error diagnosis and state recovery are detailed in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 26. Why do `.strm` files sometimes turn into tiny ninety-three byte stubs and how is that fixed?
+
+Files turn into tiny stub streams when a library scan runs while the underlying VFS mount is offline or returning empty directory responses, causing the scanner to write placeholder text instead of indexing full media targets. To fix this condition, you first ensure that both the TorBox and Drive mounts are healthy and browsable, trigger a control-port VFS refresh to clear cached empty listings, remove the invalid stub stream files, and then run a library sync followed by a forced library refresh. Preserving the mount-first startup order prevents this failure from recurring on future reboots. The library structure is covered in [Jellyfin](jellyfin.md), mount-first ordering is in [Supervisor](supervisor.md), and full cleanup steps are in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 27. What causes port conflicts on the TorBox proxy port and how does the stack resolve them?
+
+Port conflicts on the TorBox proxy port occur when previous background Python processes survive an unclean termination or when an overlapping manual launch attempts to bind the same loopback port simultaneously. The supervisor and control panel resolve this by scanning for the active listener process ID, retaining the single process that holds the listening socket, and terminating non-listening zombie duplicates while logging diagnostic forensics. A post-start listener guard then waits for the surviving process to settle and re-verifies health before proceeding with downstream dependents. Port deduplication rules are detailed in [Supervisor](supervisor.md) and [Architecture](architecture.md), and listener conflict resolution is in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 28. How does the supervisor prevent port conflicts on the PotPlayer bridge port?
+
+The supervisor prevents port conflicts on the PotPlayer bridge port by enforcing strict loopback binding, deferring bridge startup whenever the TorBox proxy is unhealthy, and identifying the genuine listener process before stopping stale helper duplicates. Because the bridge requires proxy availability to process media resolution requests, the watchdog will not spawn repeated bridge instances when the upstream proxy is down, avoiding orphan processes that hold resources without answering health probes. If multiple bridge processes are detected, deduplication keeps the listening process and clears non-listening siblings. The bridge health dependency is explained in [Supervisor](supervisor.md) and [PotPlayer](potplayer.md), with operational recovery steps in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 29. What happens if the control panel port is already bound by another application?
+
+If the control panel port is already bound by another application, the panel installer and startup checks report that the port is busy and prevent duplicate conflicting background listeners from starting. To resolve the conflict, you identify the process holding the port using system process inspection, terminate the conflicting application or reconfigure the panel to use an alternate port parameter, and re-verify the panel health endpoint. Re-running the panel installer upgrades the scheduled logon task cleanly without creating duplicate tasks. Reinstallation procedures are described in [Panel](panel.md) and [Install](install.md), and conflict remediation is in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
+
+### 30. How do I safely stop and restart the entire stack when recovering from multiple service failures?
+
+To safely stop and restart the entire stack when recovering from multiple service failures, you stop services in reverse dependency order (panel, Jellyfin, bridge, proxy, and mounts last) so active streams do not lose file-system access mid-shutdown, verify that all listener ports have cleared, and then restart in forward dependency order starting with mounts. Once the Drive and TorBox mount paths are confirmed browsable, you start the proxy and bridge with their respective health waits, start Jellyfin and allow its warming scan to proceed, and start the control panel last before running status verification scripts. The full reverse-stop and forward-start sequence is documented in [Supervisor](supervisor.md) and [Install](install.md), with emergency recovery checklists in [Troubleshooting](troubleshooting.md) and [RUNBOOK.md](../RUNBOOK.md).
