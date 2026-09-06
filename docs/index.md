@@ -6,9 +6,12 @@ This index is the starting point for the whole documentation set, with an overvi
 
 - [What this stack does](#what-this-stack-does)
 - [Start here](#start-here)
+- [Find by task](#find-by-task)
 - [All guides](#all-guides)
 - [Ports at a glance](#ports-at-a-glance)
 - [How the pieces fit](#how-the-pieces-fit)
+- [Stuck? Report a bug](#stuck-report-a-bug)
+- [Contribute](#contribute)
 
 ## What this stack does
 
@@ -22,6 +25,19 @@ NexusMedia is a local-first Jellyfin stack that plays cloud media through PotPla
 - Operations: [Panel](panel.md) explains every card and endpoint, and [Supervisor](supervisor.md) explains modes, the watchdog, and forensics.
 - Reference: [Architecture](architecture.md) has the diagram, ports, data flow, and performance tips, and [Reference](reference.md) has the glossary, security rules, and backup plan.
 - Stuck: try [FAQ](faq.md) for short answers or [Troubleshooting](troubleshooting.md) for symptom-to-fix steps.
+
+## Find by task
+
+| I want to… | Go to |
+| --- | --- |
+| Install, update, or uninstall the stack | [Install](install.md), then [Quickstart](quickstart.md) to verify |
+| Play an episode and keep resume working | [Jellyfin](jellyfin.md) + [PotPlayer](potplayer.md) |
+| Rotate the TorBox key or fix auth errors | [TorBox](torbox.md), then [Troubleshooting §2](troubleshooting.md#2-torbox-calls-fail-with-auth-errors) |
+| Check health or collect a forensics bundle | [Supervisor](supervisor.md) + [Panel](panel.md) |
+| Fix an empty library, dead mount, or hung proxy | [Troubleshooting](troubleshooting.md) first, [FAQ](faq.md) for short answers |
+| Back up or restore state on a new machine | [Reference §Backup](reference.md#backup) + [§Restore](reference.md#restore) |
+| Reuse a rescued archive tool safely | [Archive Rescue](rescued.md) (DryRun first, then the per-tool usage) |
+| Understand terms, ports, or the data flow | [Reference](reference.md) glossary, [Architecture](architecture.md) diagram |
 
 ## All guides
 
@@ -38,6 +54,7 @@ NexusMedia is a local-first Jellyfin stack that plays cloud media through PotPla
 | [Troubleshooting](troubleshooting.md) | Ten problems with symptoms and fixes. |
 | [Architecture](architecture.md) | ASCII diagram, ports, data flow, and performance tuning. |
 | [Reference](reference.md) | Glossary of fifteen terms, security, and backup plus restore. |
+| [Archive Rescue](rescued.md) | Rescued `tools/rescued/` utilities, survey, and verification. |
 
 ## Ports at a glance
 
@@ -57,3 +74,22 @@ All services bind to loopback by default and are exposed remotely only through a
 ## How the pieces fit
 
 Cloud remotes feed the VFS cache engine, which feeds both Jellyfin through `.strm` files and the proxy through HTTP. Jellyfin builds `potplayer://` links, the launcher resolves them to VFS paths or proxy URLs, PotPlayer plays them, the tracker reports progress back, and the panel and supervisor observe and repair the chain. The full diagram and step-by-step flow are in [Architecture](architecture.md).
+
+## Stuck? Report a bug
+
+1. Check [Troubleshooting](troubleshooting.md) for the matching symptom
+   and [FAQ](faq.md) for the short answer.
+2. Collect evidence first: `pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE`
+   plus `pwsh -File supervisor.ps1 -Mode Forensics` (see
+   [Supervisor](supervisor.md) and [Reference](reference.md#reproduction-checklist-for-bug-reports)).
+3. File with the reproduction checklist: [Bug report](../.github/ISSUE_TEMPLATE/bug_report.md)
+   for defects, [Feature request](../.github/ISSUE_TEMPLATE/feature_request.md)
+   for proposals. Redact every secret as `<redacted>` per
+   [Support](../SUPPORT.md).
+
+## Contribute
+
+- Read [Contributing](../CONTRIBUTING.md) and the [Pull request template](../.github/pull_request_template.md)
+  before opening a PR (reproduction before/after plus verification output required).
+- User-visible changes must update this index plus the affected guide and
+  cross-links, as checked in [Reference](reference.md#where-to-go-next).
