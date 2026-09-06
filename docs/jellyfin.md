@@ -6,6 +6,7 @@ This guide explains how Jellyfin libraries are built from stream files, how virt
 
 - [Library model](#library-model)
 - [Library setup](#library-setup)
+- [Library setup checklist](#library-setup-checklist)
 - [TMDB matching](#tmdb-matching)
 - [Resume expectations](#resume-expectations)
 - [Key API calls](#key-api-calls)
@@ -36,6 +37,19 @@ Use the tracked setup helpers with env credentials, never hardcoded secrets. All
 - `delete_stale_views.ps1` removes stale view IDs after library moves.
 - `gdrive-library-sync.ps1` keeps the Drive mount and Jellyfin converged in `Run`, `Once`, `WhatIf`, and `OrphanReport` modes: it observes the remote directly, refreshes the mounted VFS, repairs the mount when needed, asks Jellyfin to scan via `POST /Library/Refresh`, and verifies new media appears before acknowledging the change.
 - After any sync write, bulk rename, or virtual-folder change, trigger `POST /Library/Refresh` and wait about sixty seconds before judging views. The Drive sync state, heartbeat, and logs live under the config and logs folders described in [Architecture](architecture.md).
+
+## Library setup checklist
+
+Use this step-by-step checklist when provisioning a new Jellyfin instance or repairing library collections:
+
+- [ ] **1. Set Environment Variables**: Ensure `JELLYFIN_URL` (`http://localhost:8096`), `JELLYFIN_USER`, and `JELLYFIN_PASSWORD` are configured in user or machine environment without committing credentials.
+- [ ] **2. Confirm Mount Health**: Verify `F:\Media` (Google Drive) and `T:\` (TorBox) mounts are online and accessible before modifying virtual folders.
+- [ ] **3. Inspect Current Virtual Folders**: Run `pwsh -File check_status.ps1 -AsJson` to list existing virtual folders and verify authentication.
+- [ ] **4. Preview Stub & Path Cleanup**: Run `pwsh -File clean_and_setup_libraries.ps1 -WhatIf` to dry-run stub library removals (`Movies2`, `Series`) and canonical `Movies` path creation.
+- [ ] **5. Execute Library Clean & Setup**: Run `pwsh -File clean_and_setup_libraries.ps1` to remove empty stubs and bind `F:\Media\Movies` with `refreshLibrary=true`.
+- [ ] **6. Add TV Series Collection**: In the Jellyfin dashboard or via API, configure the `Series` collection pointing to `F:\Media\Series` and `F:\TorboxMedia\Series`.
+- [ ] **7. Trigger Full Media Refresh**: Invoke `POST /Library/Refresh` and allow sixty seconds for TMDB metadata matching and image extraction to complete.
+- [ ] **8. Verify User Views**: Run `pwsh -File check_user_views.ps1 -AsJson` and `pwsh -File check_views_after_restart.ps1 -AsJson` to confirm views return exit code `0`.
 
 ## TMDB matching
 
