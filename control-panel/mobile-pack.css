@@ -1,0 +1,220 @@
+/* MOB-001 tap highlight off for all mobile chrome */
+.mobile-pack-scope, .mobile-pack-scope *{ -webkit-tap-highlight-color: transparent; }
+/* MOB-002 touch-action manipulation to kill double-tap zoom delay */
+.mobile-pack-scope button, .mobile-pack-scope .btn, .mobile-pack-scope .tab, .mobile-pack-scope .icon-btn, .mobile-pack-scope a{ touch-action: manipulation; }
+/* MOB-003 dvh viewport floor for app shell */
+.mobile-pack-scope .shell{ min-height: 100dvh; }
+/* MOB-004 svh fallback for older mobile browsers */
+.mobile-pack-scope .shell{ min-height: 100svh; }
+/* MOB-005 overscroll containment on panes */
+.mobile-pack-scope .services-pane, .mobile-pack-scope .activity-pane, .mobile-pack-scope .playback-pane{ overscroll-behavior-y: contain; }
+/* MOB-006 horizontal scroll guard on body */
+.mobile-pack-scope, .mobile-pack-scope body{ overflow-x: clip; }
+/* MOB-007 global img media guard */
+.mobile-pack-scope img, .mobile-pack-scope svg, .mobile-pack-scope video{ max-width: 100%; height: auto; }
+/* MOB-008 16px inputs to stop iOS auto-zoom */
+.mobile-pack-scope input, .mobile-pack-scope select, .mobile-pack-scope textarea{ font-size: 16px; }
+/* MOB-009 single-column stacking for columns wrapper */
+@media (max-width: 768px){ .mobile-pack-scope .columns{ display: flex; flex-direction: column; gap: 12px; } }
+/* MOB-010 480px topbar stacks vertically */
+@media (max-width: 480px){ .mobile-pack-scope .topbar-inner{ display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 10px 12px; } }
+/* MOB-011 480px brand compacts */
+@media (max-width: 480px){ .mobile-pack-scope .brand-text h1{ font-size: 16px; line-height: 1.3; } }
+/* MOB-012 480px brand-sub truncates */
+@media (max-width: 480px){ .mobile-pack-scope .brand-sub{ font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } }
+/* MOB-013 480px global actions 2-col grid */
+@media (max-width: 480px){ .mobile-pack-scope .global-actions{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } }
+/* MOB-014 480px service grid single column */
+@media (max-width: 480px){ .mobile-pack-scope .service-grid{ grid-template-columns: 1fr; gap: 10px; } }
+/* MOB-015 480px pane heading wraps */
+@media (max-width: 480px){ .mobile-pack-scope .pane-heading{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; } }
+/* MOB-016 480px pane hint full row */
+@media (max-width: 480px){ .mobile-pack-scope .pane-hint{ flex-basis: 100%; font-size: 12px; } }
+/* MOB-017 640px service grid single column hold */
+@media (max-width: 640px){ .mobile-pack-scope .service-grid{ grid-template-columns: 1fr; } }
+/* MOB-018 640px playback card stacks */
+@media (max-width: 640px){ .mobile-pack-scope .playback-card{ display: flex; flex-direction: column; gap: 10px; } }
+/* MOB-019 640px topbar-status wraps */
+@media (max-width: 640px){ .mobile-pack-scope .topbar-status{ display: flex; flex-wrap: wrap; gap: 6px; } }
+/* MOB-020 640px tabs scroll sideways */
+@media (max-width: 640px){ .mobile-pack-scope .tabs{ display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px; } }
+/* MOB-021 640px activity filters stack */
+@media (max-width: 640px){ .mobile-pack-scope .act-filters{ display: flex; flex-direction: column; gap: 8px; } }
+/* MOB-022 640px log legend wraps */
+@media (max-width: 640px){ .mobile-pack-scope .log-legend{ display: flex; flex-wrap: wrap; gap: 6px 10px; } }
+/* MOB-023 768px columns collapse to one */
+@media (max-width: 768px){ .mobile-pack-scope .services-pane, .mobile-pack-scope .activity-pane{ width: 100%; max-width: 100%; } }
+/* MOB-024 768px shell padding shrinks */
+@media (max-width: 768px){ .mobile-pack-scope .shell{ padding: 10px 10px calc(10px + env(safe-area-inset-bottom)); } }
+/* MOB-025 768px service card padding compacts */
+@media (max-width: 768px){ .mobile-pack-scope .service-card{ padding: 12px; border-radius: 12px; } }
+/* MOB-026 768px playback pane full width */
+@media (max-width: 768px){ .mobile-pack-scope .playback-pane{ width: 100%; } }
+/* MOB-027 768px top-progress stays visible */
+@media (max-width: 768px){ .mobile-pack-scope .top-progress{ position: sticky; top: 0; z-index: var(--z-sticky); } }
+/* MOB-028 1024px columns narrow gap */
+@media (max-width: 1024px){ .mobile-pack-scope .columns{ gap: 14px; } }
+/* MOB-029 1024px service grid two columns */
+@media (max-width: 1024px) and (min-width: 641px){ .mobile-pack-scope .service-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* MOB-030 1024px topbar-inner wraps */
+@media (max-width: 1024px){ .mobile-pack-scope .topbar-inner{ flex-wrap: wrap; gap: 10px; } }
+/* MOB-031 tablet 2-col tuning for activity pane */
+@media (min-width: 641px) and (max-width: 1024px){ .mobile-pack-scope .activity-pane{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } }
+/* MOB-032 tablet 2-col pane heading spans */
+@media (min-width: 641px) and (max-width: 1024px){ .mobile-pack-scope .activity-pane .pane-heading{ grid-column: 1 / -1; } }
+/* MOB-033 coarse-pointer 44px buttons */
+@media (pointer: coarse){ .mobile-pack-scope .btn{ min-height: 44px; min-width: 44px; padding: 10px 16px; } }
+/* MOB-034 coarse-pointer 44px icon buttons */
+@media (pointer: coarse){ .mobile-pack-scope .icon-btn{ min-width: 44px; min-height: 44px; } }
+/* MOB-035 coarse-pointer 44px tabs */
+@media (pointer: coarse){ .mobile-pack-scope .tab{ min-height: 44px; padding: 10px 14px; } }
+/* MOB-036 coarse-pointer larger checkboxes */
+@media (pointer: coarse){ .mobile-pack-scope input[type="checkbox"]{ width: 22px; height: 22px; } }
+/* MOB-037 coarse-pointer larger radio */
+@media (pointer: coarse){ .mobile-pack-scope input[type="radio"]{ width: 22px; height: 22px; } }
+/* MOB-038 coarse-pointer chip targets */
+@media (pointer: coarse){ .mobile-pack-scope .act-chips button, .mobile-pack-scope .stack-chip, .mobile-pack-scope .fetch-pill{ min-height: 44px; display: inline-flex; align-items: center; } }
+/* MOB-039 coarse-pointer select height */
+@media (pointer: coarse){ .mobile-pack-scope select{ min-height: 44px; } }
+/* MOB-040 coarse-pointer link list spacing */
+@media (pointer: coarse){ .mobile-pack-scope .activity-pane a, .mobile-pack-scope .services-pane a{ padding-top: 6px; padding-bottom: 6px; } }
+/* MOB-041 safe-area topbar padding */
+.mobile-pack-scope .topbar{ padding-top: env(safe-area-inset-top); }
+/* MOB-042 safe-area bottom shell padding */
+.mobile-pack-scope .shell{ padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+/* MOB-043 safe-area sticky bar respects inset */
+.mobile-pack-scope .m-sticky-bar{ padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+/* MOB-044 safe-area toast clears home bar */
+.mobile-pack-scope .toast, .mobile-pack-scope .toasts{ bottom: calc(76px + env(safe-area-inset-bottom)); }
+/* MOB-045 safe-area modal sheet full bleed */
+@media (max-width: 640px){ .mobile-pack-scope .modal{ padding-bottom: env(safe-area-inset-bottom); } }
+/* MOB-046 safe-area left right guard */
+.mobile-pack-scope .shell{ padding-left: calc(10px + env(safe-area-inset-left)); padding-right: calc(10px + env(safe-area-inset-right)); }
+/* MOB-047 sticky bottom action bar */
+.mobile-pack-scope .m-sticky-bar{ position: sticky; bottom: 0; z-index: var(--z-sticky); display: flex; gap: 8px; background: var(--surface-glass); border-top: 1px solid var(--line); padding: 10px 12px; backdrop-filter: blur(12px); }
+/* MOB-048 sticky bar buttons share width */
+.mobile-pack-scope .m-sticky-bar .btn{ flex: 1 1 0; min-height: 44px; }
+/* MOB-049 thumb-zone primary action emphasis */
+@media (max-width: 640px){ .mobile-pack-scope .global-actions .btn-primary{ order: 1; min-height: 48px; font-weight: 700; } }
+/* MOB-050 thumb-zone danger sinks last */
+@media (max-width: 640px){ .mobile-pack-scope .global-actions .btn-danger{ order: 4; } }
+/* MOB-051 keyboard-safe footer avoids overlap */
+.mobile-pack-scope .m-kb-footer{ position: sticky; bottom: 0; background: var(--bg-raised); padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+/* MOB-052 keyboard-safe input focus scroll margin */
+.mobile-pack-scope input:focus, .mobile-pack-scope textarea:focus, .mobile-pack-scope select:focus{ scroll-margin-bottom: 120px; }
+/* MOB-053 ellipsis for card titles */
+.mobile-pack-scope .service-card h3, .mobile-pack-scope .playback-card h3{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* MOB-054 clamp for card descriptions */
+.mobile-pack-scope .service-card p, .mobile-pack-scope .playback-card p{ display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+/* MOB-055 clamp for log lines */
+.mobile-pack-scope .activity-pane .log-line{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* MOB-056 horizontal scroll guard for tables */
+.mobile-pack-scope table{ display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* MOB-057 pre code scroll guard */
+.mobile-pack-scope pre, .mobile-pack-scope code{ overflow-x: auto; max-width: 100%; overflow-wrap: anywhere; }
+/* MOB-058 table-to-card transform on phones */
+@media (max-width: 640px){ .mobile-pack-scope table, .mobile-pack-scope tbody, .mobile-pack-scope tr, .mobile-pack-scope td{ display: block; width: 100%; } }
+/* MOB-059 table-to-card cell spacing */
+@media (max-width: 640px){ .mobile-pack-scope td{ padding: 8px 10px; border-top: 1px solid var(--line-faint); } }
+/* MOB-060 table-to-card header hide */
+@media (max-width: 640px){ .mobile-pack-scope thead{ position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; } }
+/* MOB-061 modal full-sheet on phones */
+@media (max-width: 640px){ .mobile-pack-scope .modal, .mobile-pack-scope .dialog{ width: 100vw; max-width: 100vw; min-height: 100dvh; border-radius: 0; margin: 0; } }
+/* MOB-062 modal sheet content scrolls */
+@media (max-width: 640px){ .mobile-pack-scope .modal-body{ overflow-y: auto; max-height: calc(100dvh - 140px); -webkit-overflow-scrolling: touch; } }
+/* MOB-063 toast bottom placement */
+@media (max-width: 640px){ .mobile-pack-scope .toast, .mobile-pack-scope .toasts{ position: fixed; left: 12px; right: 12px; top: auto; } }
+/* MOB-064 toast text wraps safely */
+.mobile-pack-scope .toast{ overflow-wrap: anywhere; font-size: 14px; }
+/* MOB-065 collapsible panes on small screens */
+@media (max-width: 768px){ .mobile-pack-scope .activity-pane .log-list{ max-height: 320px; overflow-y: auto; -webkit-overflow-scrolling: touch; } }
+/* MOB-066 collapsible playback pane scroll */
+@media (max-width: 768px){ .mobile-pack-scope .playback-pane{ max-height: none; } }
+/* MOB-067 orientation landscape topbar slim */
+@media (orientation: landscape) and (max-height: 500px){ .mobile-pack-scope .topbar-inner{ padding: 6px 12px; gap: 6px; } }
+/* MOB-068 orientation landscape grid two cols */
+@media (orientation: landscape) and (max-height: 500px){ .mobile-pack-scope .service-grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* MOB-069 orientation landscape sticky bar slim */
+@media (orientation: landscape) and (max-height: 500px){ .mobile-pack-scope .m-sticky-bar{ padding: 6px 10px; } }
+/* MOB-070 hover-none underline affordances */
+@media (hover: none){ .mobile-pack-scope a{ text-decoration: underline; text-underline-offset: 2px; } }
+/* MOB-071 hover-none no hover-only reveal */
+@media (hover: none){ .mobile-pack-scope .service-card .hover-only{ display: none; } }
+/* MOB-072 hover-none always show key actions */
+@media (hover: none){ .mobile-pack-scope .service-card .btn{ opacity: 1; transform: none; } }
+/* MOB-073 hover-none focus visible ring */
+@media (hover: none){ .mobile-pack-scope :focus-visible{ outline: 2px solid var(--focus-outline); outline-offset: 2px; } }
+/* MOB-074 reduced-motion kill on mobile */
+@media (max-width: 768px) and (prefers-reduced-motion: reduce){ .mobile-pack-scope *{ animation-duration: 0.01ms; animation-iteration-count: 1; transition-duration: 0.01ms; } }
+/* MOB-075 reduced-motion backdrop orbs off */
+@media (max-width: 768px) and (prefers-reduced-motion: reduce){ .mobile-pack-scope .backdrop-decor{ display: none; } }
+/* MOB-076 print-hide mobile chrome */
+@media print{ .mobile-pack-scope .m-sticky-bar, .mobile-pack-scope .topbar, .mobile-pack-scope .global-actions{ display: none; } }
+/* MOB-077 print single column */
+@media print{ .mobile-pack-scope .columns{ display: block; } }
+/* MOB-078 320px ultra-narrow survival */
+@media (max-width: 360px){ .mobile-pack-scope .shell{ padding-left: 8px; padding-right: 8px; } }
+/* MOB-079 320px global actions one column */
+@media (max-width: 360px){ .mobile-pack-scope .global-actions{ grid-template-columns: 1fr; } }
+/* MOB-080 320px h1 shrinks */
+@media (max-width: 360px){ .mobile-pack-scope .brand-text h1{ font-size: 14px; } }
+/* MOB-081 320px chips shrink */
+@media (max-width: 360px){ .mobile-pack-scope .stack-chip, .mobile-pack-scope .fetch-pill{ font-size: 11px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; } }
+/* MOB-082 320px tabs full-width scroll */
+@media (max-width: 360px){ .mobile-pack-scope .tabs{ max-width: 100%; overflow-x: auto; } }
+/* MOB-083 font scaling body base on phones */
+@media (max-width: 640px){ .mobile-pack-scope{ font-size: 14px; line-height: 1.5; } }
+/* MOB-084 font scaling small text floor */
+@media (max-width: 640px){ .mobile-pack-scope .pane-hint, .mobile-pack-scope .checked-indicator{ font-size: 12px; } }
+/* MOB-085 activity chips horizontal snap scroll */
+.mobile-pack-scope .act-chips{ display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+/* MOB-086 activity chip no shrink */
+.mobile-pack-scope .act-chips > *{ flex: 0 0 auto; scroll-snap-align: start; }
+/* MOB-087 skeleton cards keep height stable */
+@media (max-width: 640px){ .mobile-pack-scope .service-card.skeleton, .mobile-pack-scope .playback-card.skeleton{ min-height: 120px; } }
+/* MOB-088 status dot larger touch read */
+@media (pointer: coarse){ .mobile-pack-scope .status-dot, .mobile-pack-scope .stack-chip-dot{ width: 12px; height: 12px; } }
+/* MOB-089 fetch pill truncates */
+.mobile-pack-scope .fetch-pill{ max-width: 40vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* MOB-090 checked indicator wraps */
+.mobile-pack-scope .checked-indicator{ overflow-wrap: anywhere; font-size: 12px; }
+/* MOB-091 backdrop decor disabled on phones */
+@media (max-width: 640px){ .mobile-pack-scope .backdrop-decor{ display: none; } }
+/* MOB-092 topbar blur bg on scroll */
+.mobile-pack-scope .topbar{ background: var(--surface-glass); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+/* MOB-093 dialog backdrop overscroll lock */
+.mobile-pack-scope .modal-backdrop, .mobile-pack-scope .overlay{ overscroll-behavior: contain; touch-action: none; }
+/* MOB-094 number tabular on status */
+.mobile-pack-scope .stack-chip, .mobile-pack-scope .fetch-pill{ font-variant-numeric: tabular-nums; }
+/* MOB-095 focus ring stronger on touch */
+@media (pointer: coarse){ .mobile-pack-scope :focus-visible{ outline: 3px solid var(--focus-outline); outline-offset: 2px; } }
+/* MOB-096 scrollbar slim on panes */
+.mobile-pack-scope .log-list::-webkit-scrollbar{ width: 6px; height: 6px; }
+/* MOB-097 scrollbar thumb visible */
+.mobile-pack-scope .log-list::-webkit-scrollbar-thumb{ background: var(--line-strong); border-radius: 999px; }
+/* MOB-098 image lazy layout guard */
+.mobile-pack-scope .service-card img{ aspect-ratio: 16 / 9; object-fit: cover; width: 100%; }
+/* MOB-099 form rows stack on phones */
+@media (max-width: 640px){ .mobile-pack-scope .form-row{ display: flex; flex-direction: column; gap: 8px; } }
+/* MOB-100 dialog buttons full width stack */
+@media (max-width: 480px){ .mobile-pack-scope .modal-footer, .mobile-pack-scope .dialog-footer{ display: flex; flex-direction: column; gap: 8px; } }
+/* MOB-101 dialog footer buttons 44px */
+@media (max-width: 480px){ .mobile-pack-scope .modal-footer .btn, .mobile-pack-scope .dialog-footer .btn{ min-height: 44px; width: 100%; } }
+/* MOB-102 dropdown menu larger rows */
+@media (pointer: coarse){ .mobile-pack-scope .menu-item, .mobile-pack-scope [role="option"]{ min-height: 44px; display: flex; align-items: center; } }
+/* MOB-103 skip link usable on touch */
+.mobile-pack-scope .skip-link:focus{ position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px; z-index: var(--z-skip); background: var(--accent); color: #fff; padding: 10px 14px; border-radius: 8px; }
+/* MOB-104 progress bar safe top */
+.mobile-pack-scope .top-progress{ top: env(safe-area-inset-top); }
+/* MOB-105 legend dots keep shape */
+.mobile-pack-scope .legend-dot{ flex: 0 0 auto; width: 10px; height: 10px; border-radius: 999px; }
+/* MOB-106 errors-only toggle 44px row */
+@media (pointer: coarse){ .mobile-pack-scope .act-errors-toggle{ min-height: 44px; display: inline-flex; align-items: center; gap: 8px; } }
+/* MOB-107 pane actions wrap on narrow */
+.mobile-pack-scope .pane-actions{ display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+/* MOB-108 service card actions wrap */
+.mobile-pack-scope .service-card .card-actions{ display: flex; flex-wrap: wrap; gap: 8px; }
+/* MOB-109 card action buttons grow on phones */
+@media (max-width: 640px){ .mobile-pack-scope .service-card .card-actions .btn{ flex: 1 1 120px; min-height: 44px; } }
+/* MOB-110 landscape activity list shorter */
+@media (orientation: landscape) and (max-height: 500px){ .mobile-pack-scope .activity-pane .log-list{ max-height: 220px; overflow-y: auto; } }

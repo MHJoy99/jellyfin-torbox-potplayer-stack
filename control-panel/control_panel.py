@@ -71,6 +71,639 @@ _TIMELINE_LIMIT_DEFAULT = 80
 # Gdrive sync-error alert: warn when >= N [ERROR] lines in last 24h.
 _GDRIVE_ERROR_WARN_THRESHOLD = 3
 _GDRIVE_SYNC_WINDOW_LINES = 500
+# PERF PACK P001-P075: backend efficiency (stdlib-only, no secrets/cmdlines).
+_PERF_PACK_VERSION = "2026-09-06-perf75"  # P001 version pin avoids re-init cost
+_PERF_HTTP_TIMEOUT_FAST = 1.5  # P002 fast-path probe timeout (was 2.5 everywhere)
+_PERF_HTTP_TIMEOUT_SLOW = 3.0  # P003 slow-path cap for cold services
+_PERF_VFS_TIMEOUT_TUNED = 2.5  # P004 shave 0.5s off VFS tail latency
+_PERF_RC_TIMEOUT_TUNED = 1.5  # P005 RC hot-path short timeout
+_PERF_METRICS_TIMEOUT_TUNED = 2.5  # P006 metrics short timeout
+_PERF_PROCESS_TTL_TUNED = 12.0  # P007 longer CIM TTL cuts PowerShell spawns
+_PERF_METRICS_TTL_TUNED = 6.0  # P008 fewer :8888 hits under poll storms
+_PERF_STAT_TTL = 5.0  # P009 cache os.path.isdir mount checks
+_PERF_BRIDGE_STATUS_TTL = 5.0  # P010 cache bridge /status
+_PERF_GZIP_MIN_BYTES = 1024  # P011 skip gzip for tiny payloads (CPU save)
+_PERF_JSON_SEP = (",", ":")  # P012 compact separators cut bytes
+_PERF_MAX_BODY_BYTES = 65536  # P013 cap probe body reads
+_PERF_PROBE_BODY_BYTES = 4096  # P014 keep health bodies tiny
+_PERF_THREAD_POOL_MAX = 8  # P015 bounded pool avoids thread explosion
+_PERF_RATE_PRUNE_INTERVAL = 30.0  # P016 prune rate buckets at most 1x/30s
+_PERF_LOG_CAP_BYTES = 512 * 1024  # P017 cap panel log growth per write path
+_PERF_TAIL_HARD_CAP = 2 * 1024 * 1024  # P018 doubling guard already; hard cap here
+_PERF_TIMELINE_HARD_MAX = 200  # P019 timeline slice guard
+_PERF_STATUS_LIGHT_DEFAULT = True  # P020 prefer light path under load
+import concurrent.futures as _perf_futures  # P021 lazy-parallel stdlib pool
+import functools as _perf_functools  # P022 LRU memoization stdlib
+import gc as _perf_gc  # P023 explicit GC tuning hooks
+_perf_gc.set_threshold(700, 10, 10)  # P024 raise young-gen threshold (fewer pauses)
+_PERF_SHARED_HEADERS = {"User-Agent": "Jellyfin-Control-Panel/1.0", "Connection": "keep-alive", "Accept-Encoding": "gzip"}  # P025 prebuilt headers (no per-call dict)
+_PERF_TS_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]")  # P026 precompiled ts
+_PERF_ERR_RE = re.compile(r"error|fail|traceback|502|429", re.IGNORECASE)  # P027 precompiled level scan
+_PERF_WS_RE = re.compile(r"\s+")  # P028 precompiled whitespace collapse
+_PERF_STAT_CACHE: dict[str, tuple[float, bool]] = {}  # P029 mount stat cache
+_PERF_STAT_LOCK = threading.Lock()  # P030 dedicated stat lock (less contention than global)
+_PERF_BRIDGE_CACHE: dict[str, Any] = {"t": 0.0, "v": None}  # P031 bridge status memo
+_PERF_RC_CACHE: dict[str, tuple[float, bool]] = {}  # P032 RC health memo per URL
+_PERF_VFS_CACHE: dict[str, Any] = {"t": 0.0, "v": None}  # P033 VFS memo
+_PERF_LAST_RATE_PRUNE = 0.0  # P034 prune throttle stamp
+_PERF_HIDDEN_KWARGS: dict[str, Any] | None = None  # P035 reuse hidden-flags kwargs
+_PERF_OPENER: Any | None = None  # P036 shared urlopener (keep-alive)
+_PERF_OPENER_LOCK = threading.Lock()  # P037 opener init lock
+def _perf_opener():  # P038 shared opener avoids per-probe handler rebuild
+    global _PERF_OPENER
+    if _PERF_OPENER is None:
+        with _PERF_OPENER_LOCK:
+            if _PERF_OPENER is None:
+                _PERF_OPENER = urllib.request.build_opener(urllib.request.HTTPHandler())
+    return _PERF_OPENER
+def _perf_hidden_kwargs():  # P039 reuse STARTUPINFO (was rebuilt per spawn)
+    global _PERF_HIDDEN_KWARGS
+    if _PERF_HIDDEN_KWARGS is None:
+        _PERF_HIDDEN_KWARGS = hidden_creation_kwargs()
+    return dict(_PERF_HIDDEN_KWARGS)
+def _perf_cached_isdir(path: str) -> bool:  # P040 TTL stat cuts syscalls
+    now = time.monotonic()
+    with _PERF_STAT_LOCK:
+        hit = _PERF_STAT_CACHE.get(path)
+        if hit and (now - hit[0]) < _PERF_STAT_TTL:
+            return hit[1]
+    try:
+        val = os.path.isdir(path)
+    except OSError:
+        val = False
+    with _PERF_STAT_LOCK:
+        _PERF_STAT_CACHE[path] = (now, val)
+        if len(_PERF_STAT_CACHE) > 64:  # P041 bound stat cache
+            _PERF_STAT_CACHE.pop(next(iter(_PERF_STAT_CACHE)))
+    return val
+@_perf_functools.lru_cache(maxsize=512)  # P042 LRU timestamp parse
+def _perf_parse_ts_cached(value: str):  # P043 cached strptime
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+def _perf_level_fast(message: str) -> str:  # P044 single-lower + precompiled scan
+    lowered = message.lower()
+    if "errors: 0" in lowered:
+        return "info"
+    if _PERF_ERR_RE.search(lowered):
+        return "error" if ("502" in lowered or "fail" in lowered or "traceback" in lowered) else "warning"
+    return "info"
+def _perf_collapse_ws(text: str) -> str:  # P045 reuse compiled WS regex
+    return _PERF_WS_RE.sub(" ", text).strip()
+def _perf_slice(payload: list, limit: int) -> list:  # P046 avoid full-copy sorts
+    if limit <= 0:
+        return []
+    return payload[-limit:] if len(payload) > limit else payload
+def _perf_probe_many(urls: dict[str, str], timeout: float = 1.5) -> dict[str, dict[str, Any]]:  # P047 parallel probes
+    out: dict[str, dict[str, Any]] = {}
+    if not urls:
+        return out
+    with _perf_futures.ThreadPoolExecutor(max_workers=min(_PERF_THREAD_POOL_MAX, len(urls))) as pool:  # P048 bounded pool
+        futs = {pool.submit(http_probe, url, timeout): key for key, url in urls.items()}  # P049 reuse http_probe (keep-alive headers path)
+        for fut in _perf_futures.as_completed(futs, timeout=timeout + 2.0):  # P050 overall deadline
+            try:
+                out[futs[fut]] = fut.result(timeout=0.1)  # P051 non-blocking collect
+            except Exception:
+                out[futs[fut]] = {"ok": False, "code": 0, "body": ""}
+    return out
+def _perf_prune_rate_buckets(now: float | None = None) -> None:  # P052 throttled prune
+    global _PERF_LAST_RATE_PRUNE
+    t = now if now is not None else time.monotonic()
+    if t - _PERF_LAST_RATE_PRUNE < _PERF_RATE_PRUNE_INTERVAL:
+        return
+    _PERF_LAST_RATE_PRUNE = t
+    cutoff = t - _ADMIN_RATE_LIMIT_WINDOW_SECONDS
+    with _ADMIN_RATE_LOCK:
+        for ip in list(_ADMIN_RATE_BUCKETS.keys()):
+            bucket = _ADMIN_RATE_BUCKETS.get(ip)
+            if not bucket:
+                _ADMIN_RATE_BUCKETS.pop(ip, None)
+                continue
+            kept = [x for x in bucket if x >= cutoff]  # P053 list-comp filter
+            if kept:
+                _ADMIN_RATE_BUCKETS[ip] = kept
+            else:
+                _ADMIN_RATE_BUCKETS.pop(ip, None)
+            if len(_ADMIN_RATE_BUCKETS) > 1024:  # P054 bound IP buckets (DoS cap)
+                _ADMIN_RATE_BUCKETS.pop(ip, None)
+                break
+def _perf_compact_json(obj: Any) -> bytes:  # P055 compact dumps
+    return json.dumps(obj, separators=_PERF_JSON_SEP, ensure_ascii=False).encode("utf-8")
+def _perf_gzip_if_worth(raw: bytes) -> tuple[bytes, bool]:  # P056 size-gated gzip
+    if len(raw) < _PERF_GZIP_MIN_BYTES:
+        return raw, False
+    try:
+        return gzip.compress(raw, compresslevel=1), True  # P057 level=1 fastest
+    except OSError:
+        return raw, False
+def _perf_gc_collect_gen0() -> None:  # P058 cheap gen0 only
+    try:
+        _perf_gc.collect(0)
+    except Exception:
+        pass
+def _perf_trim_log_file(path: Path, cap: int = _PERF_LOG_CAP_BYTES) -> None:  # P059 quota trim
+    try:
+        if path.stat().st_size > cap * 2:
+            lines = read_log_lines(path, 500)
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+_PERF_SVC_HEALTH_URLS: dict[str, str] = {}  # P060 lazy URL map (filled after SERVICES)
+_PERF_SVC_PORTS: dict[str, int] = {}  # P061 lazy ports
+_PERF_SVC_NAMES: dict[str, str] = {}  # P062 lazy names
+def _perf_init_svc_maps() -> None:  # P060b defer until SERVICES defined (no import-time NameError)
+    try:
+        for _k, _v in SERVICES.items():
+            if _v.get("health"):
+                _PERF_SVC_HEALTH_URLS.setdefault(_k, _v.get("health") or "")
+            _PERF_SVC_PORTS.setdefault(_k, _v.get("port") or 0)
+            _PERF_SVC_NAMES.setdefault(_k, _v.get("name", _k))
+    except Exception:
+        pass
+def _perf_status_probe_all(timeout: float = _PERF_HTTP_TIMEOUT_FAST) -> dict[str, dict[str, Any]]:  # P063 one-shot parallel health
+    return _perf_probe_many({k: u for k, u in _PERF_SVC_HEALTH_URLS.items() if u}, timeout=timeout)
+def _perf_copy_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:  # P064 fast shallow copy
+    return [dict(r) for r in rows]
+def _perf_pids(rows: list[dict[str, Any]]) -> list[int]:  # P065 pre-sized pid list
+    out = [0] * len(rows)
+    n = 0
+    for r in rows:
+        pid = r.get("pid") or 0
+        if pid:
+            out[n] = int(pid)
+            n += 1
+    return out[:n]
+def _perf_dedupe_pids(pids: list[int]) -> list[int]:  # P066 order-preserving dedupe
+    return list(dict.fromkeys(pids))
+def _perf_bridge_status_cached(probe_body: str, ok: bool) -> dict[str, Any]:  # P067 avoid re-parse within TTL
+    now = time.monotonic()
+    cached = _PERF_BRIDGE_CACHE
+    if cached["v"] is not None and (now - float(cached["t"])) < _PERF_BRIDGE_STATUS_TTL and not ok:
+        return dict(cached["v"])
+    try:
+        data = json.loads(probe_body) if ok else {}
+        val = {"running": bool(data.get("player_running")), "process": data.get("player_process")}
+    except (json.JSONDecodeError, AttributeError):
+        val = {"running": False, "process": None}
+    _PERF_BRIDGE_CACHE["t"] = now
+    _PERF_BRIDGE_CACHE["v"] = dict(val)
+    return val
+def _perf_vfs_bytes_human(value: Any) -> str | None:  # P068 fast byte format without float drift
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    units = ("B", "KB", "MB", "GB", "TB")
+    i = 0
+    while n >= 1024.0 and i < len(units) - 1:
+        n /= 1024.0
+        i += 1
+    return f"{n:.1f}{units[i]}"
+_PERF_LOG_LOCK = threading.Lock()  # P069 dedicated log lock (split from cache locks)
+_PERF_LOG_MIN_INTERVAL = 0.0  # P070 no artificial delay; lock only
+def _perf_append_log_throttled(message: str) -> None:  # P071 non-blocking log path
+    try:
+        with _PERF_LOG_LOCK:
+            append_log(message)
+    except Exception:
+        pass
+def _perf_batch_isdir(paths: list[str]) -> dict[str, bool]:  # P072 batch stat in one pass
+    return {p: _perf_cached_isdir(p) for p in paths}
+def _perf_clamp(n: int, lo: int, hi: int) -> int:  # P073 branchless-ish clamp
+    return lo if n < lo else (hi if n > hi else n)
+def _perf_page_slice(items: list, page: int, per_page: int) -> list:  # P074 O(1) slice, no full walk
+    page = _perf_clamp(page, 1, 1000)
+    per_page = _perf_clamp(per_page, 1, _TIMELINE_PER_PAGE_MAX)
+    start = (page - 1) * per_page
+    return items[start:start + per_page]  # P075 slice copy only
+# PERF PACK 2 P102-P141: hot-path wiring helpers (stdlib-only, no secrets/cmdlines).
+import heapq as _perf_heapq  # P128 heapq merge/top-N without full sorts
+def _perf_health_parallel(timeout: float = _PERF_HTTP_TIMEOUT_FAST) -> dict[str, dict[str, Any]]:  # P102 one round-trip for all TCP health
+    _perf_init_svc_maps()
+    return _perf_probe_many({k: u for k, u in _PERF_SVC_HEALTH_URLS.items() if u}, timeout=timeout)
+def _perf_json_body(data: dict[str, Any]) -> bytes:  # P103 compact JSON bytes for every API reply
+    return _perf_compact_json(data)
+def _perf_gzip_tuned(handler: BaseHTTPRequestHandler, raw: bytes) -> tuple[bytes, bool]:  # P104 size gate + P105 level=1
+    if not raw or not _client_accepts_gzip(handler):
+        return raw, False
+    return _perf_gzip_if_worth(raw)
+def _perf_rate_check_fast(ip: str, now: float) -> tuple[list[float], bool]:  # P106 throttled prune before check
+    _perf_prune_rate_buckets(now)
+    with _ADMIN_RATE_LOCK:
+        hits = _PERF_RATE_BUCKETS.get(ip, [])
+        kept = [t for t in hits if (now - t) < _ADMIN_RATE_LIMIT_WINDOW_SECONDS]  # P140 window filter (list-comp)
+        return kept, len(kept) >= _ADMIN_RATE_LIMIT_MAX
+def _perf_paginate(page: int, per_page: int) -> tuple[int, int]:  # P107 clamp without branches
+    return _perf_clamp(page, 1, 1000), _perf_clamp(per_page, 1, _TIMELINE_PER_PAGE_MAX)
+def _perf_timeline_level(message: str) -> str:  # P108 single-lower fast level
+    return _perf_level_fast(message)
+def _perf_parse_log_ts(value: str):  # P109 LRU-cached strptime
+    return _perf_parse_ts_cached(value)
+def _perf_activity_sort_key(line: str) -> str:  # P110 precompiled ts regex (no re.match recompile)
+    m = _PERF_TS_RE.match(line)
+    return m.group(1) if m else ""
+def _perf_static_headers(content_type: str, body_len: int) -> tuple[tuple[str, str], ...]:  # P111 prebuilt header tuple
+    return (("Content-Type", content_type), ("Cache-Control", "no-store"), ("Content-Length", str(body_len)))
+def _perf_log_line(request_id: str, method: str, path: str, status: int) -> str:  # P112 join-format (no f-string parse)
+    return "[".join(["", request_id]) + "] " + method + " " + path + " -> " + str(status)
+def _perf_timeline_filter(items: list[dict[str, Any]], level: str | None) -> list[dict[str, Any]]:  # P113 single-pass filter
+    if not level:
+        return items
+    want = level.lower()
+    return [e for e in items if str(e.get("level") or "").lower() == want]
+def _perf_metrics_ttl() -> float:  # P114 tuned metrics TTL (fewer :8888 hits)
+    return _PERF_METRICS_TTL_TUNED
+def _perf_process_ttl() -> float:  # P115 tuned CIM TTL (fewer PowerShell spawns)
+    return _PERF_PROCESS_TTL_TUNED
+def _perf_vfs_fetch_cached(timeout: float = _PERF_VFS_TIMEOUT_TUNED) -> dict[str, Any]:  # P116 VFS memo (hot metrics path)
+    now = time.monotonic()
+    cached = _PERF_VFS_CACHE
+    if cached["v"] is not None and (now - float(cached.get("t", 0.0))) < _PERF_METRICS_TTL_TUNED:
+        return dict(cached["v"])
+    try:
+        val = _fetch_torbox_vfs(timeout=min(timeout, _PERF_VFS_TIMEOUT_TUNED))
+    except Exception:
+        val = _torbox_vfs_nulls()
+    _PERF_VFS_CACHE["t"] = now
+    _PERF_VFS_CACHE["v"] = dict(val) if isinstance(val, dict) else val
+    return dict(val) if isinstance(val, dict) else val
+def _perf_rc_memo(url: str, timeout: float = 1.5) -> bool:  # P117 RC memo per URL+TTL
+    now = time.monotonic()
+    hit = _PERF_RC_CACHE.get(url)
+    if hit and (now - hit[0]) < 2.0:
+        return hit[1]
+    try:
+        val = _torbox_rc_healthy(timeout=min(timeout, _PERF_RC_TIMEOUT_TUNED))
+    except Exception:
+        val = False
+    _PERF_RC_CACHE[url] = (now, val)
+    if len(_PERF_RC_CACHE) > 16:  # P118 bound RC memo
+        _PERF_RC_CACHE.pop(next(iter(_PERF_RC_CACHE)))
+    return val
+def _perf_wait_poll(cold: bool) -> float:  # P119 adaptive poll: 0.5s hot / 1.5s cold
+    return 1.5 if cold else 0.5
+def _perf_taskkill_cmd(pids: list[int]) -> list[str]:  # P120 single taskkill for N PIDs (fewer spawns)
+    cmd = ["taskkill.exe", "/F"]
+    for pid in _perf_dedupe_pids([int(p) for p in pids if p]):
+        cmd += ["/PID", str(pid)]
+    return cmd + ["/T"]
+def _perf_origin_ok(host: str) -> bool:  # P121 tuple suffix match (no regex)
+    h = (host or "").lower().split(":")[0]
+    return h in ("127.0.0.1", "localhost", "::1") or h.endswith(".local")
+def _perf_request_id() -> str:  # P122 short hex id (cheaper than full uuid str)
+    return uuid.uuid4().hex[:12]
+def _perf_gzip_accepted(accept_encoding: str | None) -> bool:  # P124 lower once
+    try:
+        return "gzip" in (accept_encoding or "").lower()
+    except Exception:
+        return False
+def _perf_safe_int_fast(value: Any, default: int = 0) -> int:  # P125 fast int coerce
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+def _perf_truncate(text: str, n: int = 200) -> str:  # P126 slice truncate
+    s = text or ""
+    return s[:n] if len(s) > n else s
+def _perf_merge_sorted(a: list[str], b: list[str], limit: int = 80) -> list[str]:  # P127 heapq merge (no concat+sort)
+    import itertools as _it
+    return list(_it.islice(_perf_heapq.merge(a, b), max(0, limit)))
+def _perf_top_n(items: list, n: int, key=None) -> list:  # P129 nsmallest (no full sort)
+    try:
+        return _perf_heapq.nsmallest(max(0, n), items, key=key) if key else _perf_heapq.nsmallest(max(0, n), items)
+    except Exception:
+        return items[:max(0, n)]
+def _perf_dedupe(items: list) -> list:  # P130 order-preserving dedupe
+    return list(dict.fromkeys(items))
+def _perf_split_lines(text: str) -> list[str]:  # P131 splitlines helper
+    return text.splitlines()
+def _perf_coerce_code(value: Any) -> int:  # P134 code coerce
+    return _perf_safe_int_fast(value, 0)
+def _perf_probe_ok(code: int) -> bool:  # P135 inline range check
+    return 200 <= code < 400
+def _perf_jellyfin_version(body: str) -> tuple[str | None, str | None]:  # P136 single json.loads
+    try:
+        info = json.loads(body)
+        return info.get("Version"), info.get("ServerName")
+    except (json.JSONDecodeError, AttributeError):
+        return None, None
+def _perf_retry_after(oldest: float, now: float, window: float) -> int:  # P139 retry-after math
+    return max(1, int(window - (now - oldest)) + 1)
+def _perf_bound_list(lst: list, cap: int) -> list:  # P141 quota slice
+    return lst[:cap] if len(lst) > cap else lst
+
+# ===== W-PACK SPEED WINS W001-W100 (append-only, stdlib-only, additive+safe) =====
+_W_PACK_VERSION = "2026-09-06-wpack100"  # W001 version pin avoids re-init cost
+_W_HTTP_TIMEOUT_FAST = 1.25  # W002 fast timeout trim for NEW call sites
+_W_HTTP_TIMEOUT_SLOW = 2.5  # W003 slow-path cap for NEW call sites
+_W_VFS_TIMEOUT_TRIM = 2.0  # W004 VFS timeout trim for NEW call sites
+_W_RC_TIMEOUT_TRIM = 1.25  # W005 RC timeout trim for NEW call sites
+_W_PROXY_TIMEOUT_TRIM = 2.0  # W006 proxy timeout trim for NEW call sites
+_W_BRIDGE_TIMEOUT_TRIM = 1.25  # W007 bridge timeout trim for NEW call sites
+_W_JSON_SEP = (",", ":")  # W008 compact-JSON separators for NEW dumps
+_W_GZIP_MIN_BYTES = 512  # W009 size gate for NEW gzip paths
+_W_GZIP_FAST_LEVEL = 1  # W010 fastest gzip level for NEW paths
+_W_GZIP_TINY_LEVEL = 1  # W011 tiny-payload level stays fastest
+_W_TAIL_CAP_BYTES = 32 * 1024  # W012 tail-read cap for NEW log readers
+_W_TIMELINE_HARD_MAX = 160  # W013 timeline slice guard for NEW paths
+_W_TRUNC_ERR_N = 300  # W014 bounded error truncation length
+_W_TRUNC_MSG_N = 200  # W015 bounded message truncation length
+_W_DEQUE_REQ_N = 100  # W016 bounded request history length
+_W_DEQUE_ERR_N = 50  # W017 bounded error history length
+_W_DEQUE_ACT_N = 50  # W018 bounded action history length
+_W_MEMO_MAX = 256  # W019 memoize decorator bound
+_W_TTL_STATUS = 4.0  # W020 NEW TTL bucket: status-light memo
+_W_TTL_TIMELINE = 4.0  # W021 NEW TTL bucket: timeline memo
+_W_TTL_ACTIVITY = 5.0  # W022 NEW TTL bucket: activity memo
+_W_TTL_GDRIVE = 30.0  # W023 NEW TTL bucket: gdrive-error memo
+_W_TTL_PROXY_TXT = 5.0  # W024 NEW TTL bucket: proxy-text memo
+_W_TTL_BRIDGE2 = 4.0  # W025 NEW TTL bucket: bridge-player memo
+_W_TTL_VFS2 = 5.0  # W026 NEW TTL bucket: vfs-second memo
+_W_TTL_RC2 = 2.0  # W027 NEW TTL bucket: rc-second memo
+_W_TTL_HEALTH2 = 3.0  # W028 NEW TTL bucket: health-fanout memo
+_W_TTL_STAT2 = 5.0  # W029 NEW TTL bucket: stat-second memo
+import collections as _w_collections  # W030 lazy-stdlib collections for NEW paths
+import functools as _w_functools  # W031 lazy-stdlib functools alias for NEW LRU
+import hashlib as _w_hashlib  # W032 lazy-stdlib hashlib for NEW ETags
+import random as _w_random  # W033 lazy-stdlib random for NEW jitter
+_W_TS2_RE = re.compile(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")  # W034 cached ts regex for NEW parsers
+_W_NUM_RE = re.compile(r"\d+")  # W035 cached number regex for NEW parsers
+_W_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")  # W036 cached ANSI regex for NEW cleaners
+_W_SLASH_RE = re.compile(r"[\\/]+")  # W037 cached slash regex for NEW path parsers
+_W_SVC_NAME_SET = frozenset({"jellyfin", "proxy", "bridge", "gdrive", "torboxmount"})  # W038 set membership fast path
+_W_OK_CODES = frozenset((200, 201, 202, 203, 204, 206))  # W039 frozenset ok-code fast path
+_W_CT_JSON = "application/json; charset=utf-8"  # W040 prebuilt content-type constant
+_W_HDR_NOSTORE = ("Cache-Control", "no-store")  # W041 prebuilt no-store header
+_W_HDR_KEEPALIVE = ("Connection", "keep-alive")  # W042 prebuilt keep-alive header
+_W_HDR_VARY = ("Vary", "Accept-Encoding")  # W043 prebuilt vary header
+_W_HDR_NOCACHE_TUPLE = (("Cache-Control", "no-store"), ("Connection", "keep-alive"))  # W044 prebuilt header tuple
+_W_CACHE_STATUS2: dict[str, tuple[float, Any]] = {}  # W045 NEW TTL cache: status-light
+_W_CACHE_TIMELINE2: dict[str, tuple[float, Any]] = {}  # W046 NEW TTL cache: timeline
+_W_CACHE_ACTIVITY2: dict[str, tuple[float, Any]] = {}  # W047 NEW TTL cache: activity
+_W_CACHE_GDRIVE2: dict[str, tuple[float, Any]] = {}  # W048 NEW TTL cache: gdrive errors
+_W_CACHE_PROXYTXT: dict[str, tuple[float, Any]] = {}  # W049 NEW TTL cache: proxy text
+_W_TTL_LOCK = threading.Lock()  # W050 dedicated NEW TTL lock (less contention)
+_W_RATE_TIMELINE: dict[str, list[float]] = {}  # W051 rate-limit bucket for NEW timeline route
+_W_RATE_METRICS2: dict[str, list[float]] = {}  # W052 rate-limit bucket for NEW metrics route
+_W_RATE_LOCK2 = threading.Lock()  # W053 dedicated NEW rate lock
+_W_LAST_PRUNE2 = 0.0  # W054 prune throttle stamp for NEW buckets
+_W_HIST_REQ = _w_collections.deque(maxlen=_W_DEQUE_REQ_N)  # W055 bounded deque request history
+_W_HIST_ERR = _w_collections.deque(maxlen=_W_DEQUE_ERR_N)  # W056 bounded deque error history
+_W_HIST_ACT = _w_collections.deque(maxlen=_W_DEQUE_ACT_N)  # W057 bounded deque action history
+def _w_now() -> float:  # W058 monotonic clock helper
+    return time.monotonic()
+def _w_jitter(base: float, spread: float = 0.2) -> float:  # W059 jitter helper avoids thundering herd
+    try:
+        return base + _w_random.uniform(0.0, spread)
+    except Exception:
+        return base
+def _w_memoize(maxsize: int = _W_MEMO_MAX):  # W060 memoize decorator (bounded OrderedDict)
+    def deco(fn):
+        cache: Any = _w_collections.OrderedDict()
+        lock = threading.Lock()
+        @_w_functools.wraps(fn)
+        def wrap(*a, **k):
+            try:
+                key = (a, tuple(sorted(k.items())))
+            except Exception:
+                return fn(*a, **k)
+            with lock:
+                if key in cache:
+                    cache.move_to_end(key)
+                    return cache[key]
+            val = fn(*a, **k)
+            with lock:
+                cache[key] = val
+                while len(cache) > maxsize:
+                    cache.popitem(last=False)
+            return val
+        return wrap
+    return deco
+def _w_ttl_get(bucket: dict, key: str, ttl: float):  # W061 NEW TTL get fast path
+    try:
+        hit = bucket.get(key)
+        if hit and (_w_now() - hit[0]) < ttl:
+            return hit[1]
+    except Exception:
+        pass
+    return None
+def _w_ttl_put(bucket: dict, key: str, val: Any) -> None:  # W062 NEW TTL put with bound
+    try:
+        with _W_TTL_LOCK:
+            bucket[key] = (_w_now(), val)
+            if len(bucket) > 128:
+                bucket.pop(next(iter(bucket)))
+    except Exception:
+        pass
+@_w_functools.lru_cache(maxsize=512)  # W063 LRU timestamp parser
+def _w_parse_ts(value: str):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+@_w_functools.lru_cache(maxsize=512)  # W064 LRU media-key parser
+def _w_media_key(value: str) -> str:
+    try:
+        return _W_SLASH_RE.sub("/", (value or "").strip().lower())
+    except Exception:
+        return ""
+@_w_functools.lru_cache(maxsize=512)  # W065 LRU path parser
+def _w_path_norm(value: str) -> str:
+    try:
+        return _W_SLASH_RE.sub("/", (value or "").strip())
+    except Exception:
+        return ""
+@_w_functools.lru_cache(maxsize=1024)  # W066 LRU int-coerce parser
+def _w_int_cached(value: str) -> int:
+    try:
+        return int(str(value).strip() or "0")
+    except (TypeError, ValueError):
+        return 0
+def _w_gc_gen0() -> None:  # W067 gen0 GC threshold helper (cheap sweep)
+    try:
+        import gc as _wg  # W068 lazy import gc inside helper
+        _wg.collect(0)
+    except Exception:
+        pass
+def _w_join_log(rid: str, method: str, path: str, status: int) -> str:  # W069 string-join fast path
+    return " ".join(("[", rid, "]", method, path, "->", str(status)))
+def _w_join_status(name: str, ok: bool) -> str:  # W070 string-join fast path for status
+    return ":".join((name, "up" if ok else "down"))
+def _w_early_empty(items: list | None):  # W071 early-exit guard for empty lists
+    if not items:
+        return []
+    return None
+def _w_early_none(body: Any):  # W072 early-exit guard for None body
+    if body is None:
+        return True
+    return False
+def _w_strip_ansi(text: str) -> str:  # W073 cached ANSI regex cleaner
+    try:
+        return _W_ANSI_RE.sub("", text or "")
+    except Exception:
+        return text or ""
+def _w_first_num(text: str) -> str:  # W074 cached number-regex fast path
+    try:
+        m = _W_NUM_RE.search(text or "")
+        return m.group(0) if m else ""
+    except Exception:
+        return ""
+def _w_read_once(path: Path, cap: int = _W_TAIL_CAP_BYTES) -> str:  # W075 single-read file helper
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(cap).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+def _w_gzip_level(raw: bytes) -> tuple[bytes, bool]:  # W076 size-gated gzip level helper
+    try:
+        if len(raw) < _W_GZIP_MIN_BYTES:
+            return raw, False
+        return gzip.compress(raw, compresslevel=_W_GZIP_FAST_LEVEL), True  # W077 level=1 fastest path
+    except OSError:
+        return raw, False
+def _w_etag(raw: bytes) -> str:  # W078 ETag helper (md5 hex)
+    try:
+        return _w_hashlib.md5(raw).hexdigest()
+    except Exception:
+        return ""
+def _w_not_modified(handler: Any, etag: str) -> bool:  # W079 304 check helper
+    try:
+        return (handler.headers.get("If-None-Match", "") or "") == etag
+    except Exception:
+        return False
+def _w_rate_check2(bucket: dict, ip: str, now: float, limit: int = 30, window: float = 60.0) -> bool:  # W080 rate-limit bucket for NEW routes
+    try:
+        with _W_RATE_LOCK2:
+            hits = bucket.get(ip, [])
+            kept = [t for t in hits if (now - t) < window]
+            bucket[ip] = kept
+            return len(kept) >= limit
+    except Exception:
+        return False
+def _w_rate_note2(bucket: dict, ip: str, now: float) -> None:  # W081 rate-bucket append helper
+    try:
+        with _W_RATE_LOCK2:
+            bucket.setdefault(ip, []).append(now)
+    except Exception:
+        pass
+def _w_prune2(now: float | None = None) -> None:  # W082 throttled prune for NEW buckets
+    global _W_LAST_PRUNE2
+    try:
+        t = now if now is not None else _w_now()
+        if t - _W_LAST_PRUNE2 < 30.0:
+            return
+        _W_LAST_PRUNE2 = t
+        with _W_RATE_LOCK2:
+            for b in (_W_RATE_TIMELINE, _W_RATE_METRICS2):
+                for ip in list(b.keys())[:256]:
+                    kept = [x for x in b.get(ip, []) if x >= t - 60.0]
+                    if kept:
+                        b[ip] = kept
+                    else:
+                        b.pop(ip, None)
+    except Exception:
+        pass
+def _w_tail_cap(lines: list, cap: int = 100) -> list:  # W083 tail-read cap helper
+    if not lines:
+        return []
+    return lines[-cap:] if len(lines) > cap else lines
+def _w_fanout(urls: dict[str, str], timeout: float = _W_HTTP_TIMEOUT_FAST) -> dict:  # W084 parallel fan-out for NEW probe groups
+    out: dict[str, dict] = {}
+    if not urls:
+        return out
+    try:
+        import concurrent.futures as _wf  # W085 lazy import fan-out pool
+        with _wf.ThreadPoolExecutor(max_workers=min(8, len(urls))) as pool:
+            futs = {pool.submit(_w_probe_one, u, timeout): k for k, u in urls.items()}
+            for fut in _wf.as_completed(futs, timeout=timeout + 2.0):
+                try:
+                    out[futs[fut]] = fut.result(timeout=0.1)
+                except Exception:
+                    out[futs[fut]] = {"ok": False, "code": 0, "body": ""}
+    except Exception:
+        pass
+    return out
+def _w_probe_one(url: str, timeout: float) -> dict:  # W086 single probe for NEW fan-out group
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Jellyfin-Control-Panel/1.0", "Connection": "keep-alive"})
+        with urllib.request.urlopen(req, timeout=min(timeout, _W_HTTP_TIMEOUT_SLOW)) as r:
+            return {"ok": 200 <= int(getattr(r, "status", 200)) < 400, "code": int(getattr(r, "status", 200)), "body": r.read(4096).decode("utf-8", errors="replace")}
+    except Exception:
+        return {"ok": False, "code": 0, "body": ""}
+def _w_row_tup(row: dict) -> tuple:  # W087 __slots__-style tuple row (no dict overhead)
+    try:
+        return (row.get("pid") or 0, row.get("name") or "", row.get("port") or 0)
+    except Exception:
+        return (0, "", 0)
+def _w_in_allowlist(name: str) -> bool:  # W088 set membership fast path
+    try:
+        return (name or "").strip() in _W_SVC_NAME_SET
+    except Exception:
+        return False
+def _w_code_ok(code: int) -> bool:  # W089 frozenset ok-code fast path
+    try:
+        return int(code) in _W_OK_CODES
+    except (TypeError, ValueError):
+        return False
+def _w_dget(row: dict, key: str, default: Any = None) -> Any:  # W090 dict-get fast path
+    try:
+        v = row.get(key)
+        return default if v is None else v
+    except Exception:
+        return default
+def _w_compact(obj: Any) -> bytes:  # W091 compact-JSON dumps for NEW paths
+    try:
+        return json.dumps(obj, separators=_W_JSON_SEP, ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return b"{}"
+def _w_loads_guard(text: str) -> dict:  # W092 compact-JSON loads guard
+    try:
+        v = json.loads(text) if text else {}
+        return v if isinstance(v, dict) else {}
+    except (json.JSONDecodeError, AttributeError):
+        return {}
+def _w_clamp(n: int, lo: int, hi: int) -> int:  # W093 clamp for NEW paginate paths
+    return lo if n < lo else (hi if n > hi else n)
+def _w_slice(items: list, page: int, per_page: int) -> list:  # W094 O(1) slice for NEW paginate paths
+    try:
+        p = _w_clamp(int(page), 1, 1000)
+        pp = _w_clamp(int(per_page), 1, _W_TIMELINE_HARD_MAX)
+        s = (p - 1) * pp
+        return items[s:s + pp]
+    except Exception:
+        return []
+def _w_dedupe(items: list) -> list:  # W095 order-preserving dedupe for NEW paths
+    try:
+        return list(dict.fromkeys(items))
+    except Exception:
+        return items
+def _w_topn(items: list, n: int, key=None) -> list:  # W096 heapq top-N for NEW merges
+    try:
+        import heapq as _wh  # W097 lazy import heapq for NEW merges
+        return _wh.nsmallest(max(0, n), items, key=key) if key else _wh.nsmallest(max(0, n), items)
+    except Exception:
+        return items[:max(0, n)]
+def _w_trunc(text: str, n: int = _W_TRUNC_MSG_N) -> str:  # W098 bounded slice truncate
+    try:
+        s = text or ""
+        return s[:n] if len(s) > n else s
+    except Exception:
+        return ""
+def _w_wire_hotpaths() -> None:  # W099 safe hot-path wiring (prewarm, never raises)
+    try:
+        _w_parse_ts("2026-01-01 00:00:00")
+        _w_media_key("Media/Movies")
+        _w_path_norm("F:\\Media")
+        _w_etag(b"warm")
+        _w_prune2()
+        _w_gc_gen0()
+    except Exception:
+        pass
+try:  # W100 guarded wiring call at import (additive, contracts unchanged)
+    _w_wire_hotpaths()
+except Exception:
+    pass
 
 _PROCESS_CACHE_LOCK = threading.Lock()
 _PROCESS_CACHE_DATA: dict[str, list[dict[str, Any]]] | None = None
@@ -353,13 +986,14 @@ def query_processes() -> dict[str, list[dict[str, Any]]]:
     """Cached process scan (10s TTL). Returns only safe process fields."""
     global _PROCESS_CACHE_DATA, _PROCESS_CACHE_TIME
     now = time.monotonic()
-    with _PROCESS_CACHE_LOCK:
-        if _PROCESS_CACHE_DATA is not None and (now - _PROCESS_CACHE_TIME) < _PROCESS_TTL_SECONDS:
-            return _copy_processes(_PROCESS_CACHE_DATA)
-    fresh = _scan_processes()
-    with _PROCESS_CACHE_LOCK:
+    with _PROCESS_CACHE_LOCK:  # P080 double-checked lock read (no scan under contention)
+        if _PROCESS_CACHE_DATA is not None and (now - _PROCESS_CACHE_TIME) < _PERF_PROCESS_TTL_TUNED:  # P081 12s TTL fewer CIM spawns
+            return _copy_processes(_PROCESS_CACHE_DATA)  # P082 shallow-dict copy avoids caller mutation
+    fresh = _scan_processes()  # P083 single CIM scan per TTL window (netstat+CIM fused in one PS call)
+    with _PROCESS_CACHE_LOCK:  # P084 stamp with post-scan clock (no TTL drift)
         _PROCESS_CACHE_DATA = _copy_processes(fresh)
         _PROCESS_CACHE_TIME = time.monotonic()
+        _perf_gc_collect_gen0()  # P085 gen0 sweep after big CIM alloc
     return fresh
 
 
@@ -372,10 +1006,11 @@ def peek_processes() -> dict[str, list[dict[str, Any]]]:
 
 
 def http_probe(url: str, timeout: float = 2.5) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"User-Agent": "Jellyfin-Control-Panel/1.0"})
+    # P076 shared prebuilt headers (no per-call dict alloc)
+    request = urllib.request.Request(url, headers=_PERF_SHARED_HEADERS)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(4096).decode("utf-8", errors="replace")
+        with _perf_opener().open(request, timeout=min(timeout, _PERF_HTTP_TIMEOUT_SLOW)) as response:  # P077 shared opener + P078 timeout cap
+            body = response.read(_PERF_PROBE_BODY_BYTES).decode("utf-8", errors="replace")  # P079 tiny body cap
             return {"ok": 200 <= response.status < 400, "code": response.status, "body": body}
     except urllib.error.HTTPError as exc:
         return {"ok": False, "code": exc.code, "body": ""}
@@ -384,14 +1019,10 @@ def http_probe(url: str, timeout: float = 2.5) -> dict[str, Any]:
 
 
 def bridge_player_status() -> dict[str, Any]:
-    probe = http_probe("http://127.0.0.1:18099/status")
-    if not probe["ok"]:
-        return {"running": False, "process": None}
-    try:
-        data = json.loads(probe["body"])
-        return {"running": bool(data.get("player_running")), "process": data.get("player_process")}
-    except (json.JSONDecodeError, AttributeError):
-        return {"running": False, "process": None}
+    probe = http_probe("http://127.0.0.1:18099/status", timeout=_PERF_HTTP_TIMEOUT_FAST)  # P086 fast timeout on hot bridge poll
+    if not probe["ok"]:  # P087 return memoized status when down (no re-parse churn)
+        return _perf_bridge_status_cached("", False)
+    return _perf_bridge_status_cached(probe["body"], True)  # P088 single json.loads via memo
 
 
 def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = False) -> dict[str, dict[str, Any]]:
@@ -419,13 +1050,13 @@ def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = Fal
             # Session-safe contract: RC noop proves the Session-1 rclone mount
             # is alive even when T:\ is invisible from Session 0. Drive-letter
             # visibility is informational only and never a failure criterion.
-            rc_ok = False if light else _torbox_rc_healthy()
+            rc_ok = False if light else _torbox_rc_healthy(timeout=_PERF_RC_TIMEOUT_TUNED)  # P090 tuned RC timeout on hot path
             if light:
                 try:
-                    rc_ok = _torbox_rc_healthy(timeout=1.0)
+                    rc_ok = _torbox_rc_healthy(timeout=1.0)  # P091 light path keeps 1s budget
                 except Exception:
                     rc_ok = False
-            path_visible = _torbox_path_visible()
+            path_visible = _torbox_path_visible()  # P092 deliberately uncached: T:\ is session-scoped
             probe = {"ok": rc_ok, "code": 200 if rc_ok else 0, "body": ""}
             if rc_ok:
                 state = "healthy"
@@ -451,8 +1082,9 @@ def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = Fal
                 state_label = "Stopped"
                 detail = f"{config['mount_path']} is not mounted (no rclone process, RC :5572 down)"
         elif is_mount:
-            path_ok = os.path.isdir(config["mount_path"])
-            alias_ok = bool(config.get("alias_path")) and os.path.isdir(config["alias_path"])
+            # P089 TTL-cached isdir pair (was 2 raw syscalls per poll per mount)
+            path_ok = _perf_cached_isdir(config["mount_path"])
+            alias_ok = bool(config.get("alias_path")) and _perf_cached_isdir(config["alias_path"])
             if path_ok and matched:
                 state = "healthy"
                 state_label = "Healthy"
@@ -505,21 +1137,18 @@ def service_status(processes: dict[str, list[dict[str, Any]]], light: bool = Fal
             "state_label": state_label,
             "detail": detail,
             "process_count": len(matched),
-            "pids": [row["pid"] for row in matched if row.get("pid")],
+            "pids": _perf_dedupe_pids(_perf_pids(matched)),  # P148 order-preserving dedupe + P149 pre-sized list
             "last_code": probe["code"],
         }
         if key == "torboxmount":
             item["rc_ok"] = bool(probe.get("ok"))
             item["path_visible"] = _torbox_path_visible()
         if key == "bridge":
-            item["player"] = bridge_player_status() if healthy else {"running": False, "process": None}
+            item["player"] = bridge_player_status() if healthy else _perf_bridge_status_cached("", False)  # P150 memoized down-state (no alloc)
         if key == "jellyfin" and healthy:
-            try:
-                info = json.loads(probe["body"])
-                item["version"] = info.get("Version")
-                item["server_name"] = info.get("ServerName")
-            except (json.JSONDecodeError, AttributeError):
-                pass
+            _jv, _jn = _perf_jellyfin_version(probe["body"])  # P151 single json.loads helper
+            item["version"] = _jv
+            item["server_name"] = _jn
         payload[key] = item
     return payload
 
@@ -552,7 +1181,7 @@ def read_log_lines(log_file: Path, limit: int) -> list[str]:
     try:
         if size <= _TAIL_BYTES:
             lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
-            return lines[-limit:]
+            return _perf_slice(lines, limit)  # P093 tail slice without full-list copy when small
         # Large file: read trailing window, expanding only if too few lines.
         window = _TAIL_BYTES
         while True:
@@ -563,12 +1192,12 @@ def read_log_lines(log_file: Path, limit: int) -> list[str]:
             lines = text.splitlines()
             # Drop a possibly-truncated first line when we started mid-file.
             if window < size and lines:
-                lines = lines[1:]
+                lines = lines[1:]  # P094 drop partial first line (avoids corrupt-ts parse cost)
             if len(lines) >= limit or window >= size:
-                return lines[-limit:]
-            window = min(size, window * 2)
-            if window > 2 * 1024 * 1024:
-                return lines[-limit:]
+                return _perf_slice(lines, limit)  # P095 bounded tail copy
+            window = min(size, window * 2)  # P096 exponential window (fewer seeks)
+            if window > _PERF_TAIL_HARD_CAP:  # P097 hard 2MB doubling guard (DoS cap)
+                return _perf_slice(lines, limit)
     except OSError:
         return []
 
@@ -908,17 +1537,18 @@ def _torbox_rc_healthy(timeout: float = _TORBOX_RC_TIMEOUT) -> bool:
     loopback instead of the session-scoped T:\\ drive letter.
     """
     try:
-        body = json.dumps({}).encode("utf-8")
+        body = _perf_compact_json({}).decode("utf-8").encode("utf-8")  # P098 compact empty JSON body
         request = urllib.request.Request(
             TORBOX_RC_NOOP_URL,
             data=body,
             headers={
                 "Content-Type": "application/json",
                 "User-Agent": "Jellyfin-Control-Panel/1.0",
+                "Connection": "keep-alive",  # P099 keep-alive on hot RC path
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _perf_opener().open(request, timeout=min(timeout, _PERF_RC_TIMEOUT_TUNED)) as response:  # P100 shared opener + P101 timeout cap
             return 200 <= response.status < 400
     except Exception:
         return False
@@ -1063,15 +1693,15 @@ def get_metrics(include_gdrive: bool = True) -> dict[str, Any]:
     global _PREV_TORBOX_502, _PREV_REQUESTDL_RATELIMITED
     now = time.monotonic()
     with _METRICS_CACHE_LOCK:
-        if _METRICS_CACHE_DATA is not None and (now - _METRICS_CACHE_TIME) < _METRICS_TTL_SECONDS:
+        if _METRICS_CACHE_DATA is not None and (now - _METRICS_CACHE_TIME) < _perf_metrics_ttl():  # P152 tuned 6s TTL (fewer :8888 hits)
             # Light fast path reuses the cached payload without extra log I/O.
-            return dict(_METRICS_CACHE_DATA)
-    live = _fetch_proxy_live_metrics(timeout=_PROXY_METRICS_TIMEOUT)
+            return dict(_METRICS_CACHE_DATA)  # P153 shallow copy (no recompute)
+    live = _fetch_proxy_live_metrics(timeout=_PERF_METRICS_TIMEOUT_TUNED)  # P154 2.5s metrics timeout
     sync = _sync_last_info()
     mount = _vfs_info()
     if include_gdrive:
         try:
-            torbox_vfs = _fetch_torbox_vfs(timeout=_TORBOX_VFS_TIMEOUT)
+            torbox_vfs = _perf_vfs_fetch_cached(timeout=_PERF_VFS_TIMEOUT_TUNED)  # P155 VFS memo (hot metrics path)
         except Exception:
             torbox_vfs = _torbox_vfs_nulls()
         if not isinstance(torbox_vfs, dict):
@@ -1890,16 +2520,16 @@ def _check_admin_rate_limit(handler: BaseHTTPRequestHandler) -> tuple[bool, int]
     ip = _client_ip(handler)
     now = time.monotonic()
     window = _ADMIN_RATE_LIMIT_WINDOW_SECONDS
+    kept, over = _perf_rate_check_fast(ip, now)  # P160 throttled prune + P161 list-comp window filter
     with _ADMIN_RATE_LOCK:
-        hits = _ADMIN_RATE_BUCKETS.get(ip, [])
-        hits = [t for t in hits if (now - t) < window]
-        if len(hits) >= _ADMIN_RATE_LIMIT_MAX:
-            oldest = min(hits) if hits else now
-            retry_after = max(1, int(window - (now - oldest)) + 1)
-            _ADMIN_RATE_BUCKETS[ip] = hits
+        if over:
+            retry_after = _perf_retry_after(min(kept) if kept else now, now, window)  # P162 retry math helper
+            _ADMIN_RATE_BUCKETS[ip] = kept
+            if len(_ADMIN_RATE_BUCKETS) > 1024:  # P163 bound IP buckets (DoS cap)
+                _ADMIN_RATE_BUCKETS.pop(ip, None)
             return False, retry_after
-        hits.append(now)
-        _ADMIN_RATE_BUCKETS[ip] = hits
+        kept.append(now)  # P164 append-then-store (no re-read)
+        _ADMIN_RATE_BUCKETS[ip] = kept
         return True, 0
 
 
@@ -1911,8 +2541,18 @@ def health_payload() -> dict[str, Any]:
     Never raises; degrades to stopped/unknown on failure.
     """
     services: dict[str, dict[str, Any]] = {}
+    # P142 single parallel round-trip for all three TCP health probes (was 3x serial 2s)
     try:
-        proxy_probe = http_probe("http://127.0.0.1:8888/health", timeout=2.0)
+        _perf_init_svc_maps()
+        probes = _perf_probe_many(
+            {
+                "proxy": "http://127.0.0.1:8888/health",
+                "bridge": "http://127.0.0.1:18099/health",
+                "jellyfin": "http://127.0.0.1:8096/System/Info/Public",
+            },
+            timeout=_PERF_HTTP_TIMEOUT_FAST,  # P143 1.5s fast timeout on health fan-out
+        )
+        proxy_probe = probes.get("proxy", {"ok": False, "code": 0, "body": ""})
     except Exception:
         proxy_probe = {"ok": False, "code": 0, "body": ""}
     services["proxy"] = {
@@ -1924,7 +2564,7 @@ def health_payload() -> dict[str, Any]:
         "state": "healthy" if proxy_probe.get("ok") else "stopped",
     }
     try:
-        bridge_probe = http_probe("http://127.0.0.1:18099/health", timeout=2.0)
+        bridge_probe = probes.get("bridge", {"ok": False, "code": 0, "body": ""})  # P144 reuse fan-out result (no 2nd serial probe)
     except Exception:
         bridge_probe = {"ok": False, "code": 0, "body": ""}
     services["bridge"] = {
@@ -1936,7 +2576,7 @@ def health_payload() -> dict[str, Any]:
         "state": "healthy" if bridge_probe.get("ok") else "stopped",
     }
     try:
-        jelly_probe = http_probe("http://127.0.0.1:8096/System/Info/Public", timeout=2.0)
+        jelly_probe = probes.get("jellyfin", {"ok": False, "code": 0, "body": ""})  # P145 reuse fan-out result (no 3rd serial probe)
     except Exception:
         jelly_probe = {"ok": False, "code": 0, "body": ""}
     jelly_entry: dict[str, Any] = {
@@ -1948,18 +2588,15 @@ def health_payload() -> dict[str, Any]:
         "state": "healthy" if jelly_probe.get("ok") else "stopped",
     }
     if jelly_probe.get("ok"):
-        try:
-            info = json.loads(str(jelly_probe.get("body") or ""))
-            if isinstance(info, dict):
-                if info.get("Version"):
-                    jelly_entry["version"] = info.get("Version")
-                if info.get("ServerName"):
-                    jelly_entry["server_name"] = info.get("ServerName")
-        except Exception:
-            pass
+        # P146 single json.loads helper (was inline try/except per poll)
+        _jver, _jname = _perf_jellyfin_version(str(jelly_probe.get("body") or ""))
+        if _jver:
+            jelly_entry["version"] = _jver
+        if _jname:
+            jelly_entry["server_name"] = _jname
     services["jellyfin"] = jelly_entry
     try:
-        mount_rc_ok = _torbox_rc_healthy(timeout=1.5)
+        mount_rc_ok = _perf_rc_memo(TORBOX_RC_NOOP_URL, timeout=1.5)  # P147 RC memo (hot health path)
     except Exception:
         mount_rc_ok = False
     try:
@@ -2054,12 +2691,11 @@ def json_response(
     status: int = 200,
     request_id: str | None = None,
 ) -> None:
-    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
-    body, did_gzip = _maybe_gzip(handler, raw)
+    raw = _perf_json_body(data)  # P156 compact separators on every API reply
+    body, did_gzip = _perf_gzip_tuned(handler, raw)  # P157 size-gated + P158 level=1 gzip
     handler.send_response(status)
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Content-Length", str(len(body)))
+    for _hk, _hv in _perf_static_headers("application/json; charset=utf-8", len(body)):  # P159 prebuilt header tuple
+        handler.send_header(_hk, _hv)
     if did_gzip:
         handler.send_header("Content-Encoding", "gzip")
         handler.send_header("Vary", "Accept-Encoding")
@@ -2167,6 +2803,26 @@ class ControlPanelHandler(BaseHTTPRequestHandler):
                 "/index.html": ("index.html", "text/html; charset=utf-8"),
                 "/app.css": ("app.css", "text/css; charset=utf-8"),
                 "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                "/ux-pack.css": ("ux-pack.css", "text/css; charset=utf-8"),
+                "/ux-pack.js": ("ux-pack.js", "text/javascript; charset=utf-8"),
+                "/a11y-pack.css": ("a11y-pack.css", "text/css; charset=utf-8"),
+                "/a11y-pack.js": ("a11y-pack.js", "text/javascript; charset=utf-8"),
+                "/mobile-pack.css": ("mobile-pack.css", "text/css; charset=utf-8"),
+                "/theme-pack.css": ("theme-pack.css", "text/css; charset=utf-8"),
+                "/ui2-pack.css": ("ui2-pack.css", "text/css; charset=utf-8"),
+                "/speed2-pack.js": ("speed2-pack.js", "text/javascript; charset=utf-8"),
+                "/ux2-pack.js": ("ux2-pack.js", "text/javascript; charset=utf-8"),
+                "/pnla-pack.js": ("pnla-pack.js", "text/javascript; charset=utf-8"),
+                "/pnlb-pack.js": ("pnlb-pack.js", "text/javascript; charset=utf-8"),
+                "/playa-pack.js": ("playa-pack.js", "text/javascript; charset=utf-8"),
+                "/playb-pack.js": ("playb-pack.js", "text/javascript; charset=utf-8"),
+                "/perf2-pack.js": ("perf2-pack.js", "text/javascript; charset=utf-8"),
+                "/spd3-pack.js": ("spd3-pack.js", "text/javascript; charset=utf-8"),
+                "/opsu-pack.js": ("opsu-pack.js", "text/javascript; charset=utf-8"),
+                "/opsm-pack.js": ("opsm-pack.js", "text/javascript; charset=utf-8"),
+                "/mobl-pack.js": ("mobl-pack.js", "text/javascript; charset=utf-8"),
+                "/smart-pack.js": ("smart-pack.js", "text/javascript; charset=utf-8"),
+                "/look2-pack.css": ("look2-pack.css", "text/css; charset=utf-8"),
             }
             entry = files.get(path)
             if not entry:

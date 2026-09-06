@@ -1,0 +1,683 @@
+/* NexusMedia theme-pack: opt-in variants only; dark default untouched. */
+
+/* THM-001 light theme: paper background token */
+.theme-light {
+  --bg: #f4f6fb;
+}
+
+/* THM-002 light theme: raised background token */
+.theme-light {
+  --bg-raised: #ffffff;
+}
+
+/* THM-003 light theme: primary surface token */
+.theme-light {
+  --surface: rgba(255, 255, 255, 0.94);
+}
+
+/* THM-004 light theme: secondary surface token */
+.theme-light {
+  --surface-2: #eef2f8;
+}
+
+/* THM-005 light theme: tertiary surface token */
+.theme-light {
+  --surface-3: #e3eaf4;
+}
+
+/* THM-006 light theme: primary text token */
+.theme-light {
+  --text: #16202f;
+}
+
+/* THM-007 light theme: dim text token */
+.theme-light {
+  --text-dim: #3d4c63;
+}
+
+/* THM-008 light theme: muted + faint tokens */
+.theme-light {
+  --muted: #5f7089;
+  --faint: #8a97ab;
+}
+
+/* THM-009 light theme: hairline border tokens */
+.theme-light {
+  --line: rgba(22, 32, 47, 0.12);
+  --line-strong: rgba(22, 32, 47, 0.24);
+}
+
+/* THM-010 light theme: card + pop shadows */
+.theme-light {
+  --shadow-card: 0 8px 24px rgba(30, 45, 70, 0.12);
+  --shadow-pop: 0 16px 44px rgba(30, 45, 70, 0.18);
+  --shadow-menu: 0 10px 28px rgba(30, 45, 70, 0.16);
+}
+
+/* THM-011 light theme: color-scheme + accent ring */
+.theme-light {
+  color-scheme: light;
+  --accent-ring: rgba(37, 99, 235, 0.35);
+  --focus-outline: #1d4ed8;
+}
+
+/* THM-012 light theme: selection wash */
+.theme-light ::selection {
+  background: rgba(37, 99, 235, 0.22);
+}
+
+/* THM-013 light theme: scrollbar track tokens */
+.theme-light {
+  --scroll-track: #e6ebf3;
+  --scroll-thumb: #b9c4d6;
+  --scroll-thumb-hover: #9fb0c8;
+}
+
+/* THM-014 light theme: focus ring token */
+.theme-light {
+  --focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.28);
+}
+
+/* THM-015 light theme: skeleton shimmer tint */
+.theme-light {
+  --shimmer: linear-gradient(100deg, #e8edf5 30%, #f7fafd 50%, #e8edf5 70%);
+}
+
+/* THM-016 high contrast: near-black background */
+.theme-hc {
+  --bg: #000000;
+}
+
+/* THM-017 high contrast: raised + surface tokens */
+.theme-hc {
+  --bg-raised: #0a0a0a;
+  --surface: #101010;
+  --surface-2: #161616;
+  --surface-3: #1e1e1e;
+}
+
+/* THM-018 high contrast: maximum-legibility text */
+.theme-hc {
+  --text: #ffffff;
+  --text-dim: #f2f2f2;
+  --muted: #d9d9d9;
+  --faint: #bdbdbd;
+}
+
+/* THM-019 high contrast: strong border tokens */
+.theme-hc {
+  --line: rgba(255, 255, 255, 0.55);
+  --line-strong: #ffffff;
+}
+
+/* THM-020 high contrast: vivid accent + ring */
+.theme-hc {
+  --accent: #66a3ff;
+  --accent-soft: rgba(102, 163, 255, 0.28);
+  --accent-ring: rgba(102, 163, 255, 0.8);
+}
+
+/* THM-021 high contrast: thick focus outline */
+.theme-hc {
+  --focus-outline: #ffd60a;
+  --focus-ring: 0 0 0 3px #ffd60a;
+}
+
+/* THM-022 high contrast: kill ambient shadows */
+.theme-hc {
+  --shadow-card: none;
+  --shadow-pop: none;
+  --shadow-menu: 0 0 0 2px #ffffff;
+}
+
+/* THM-023 high contrast: selection wash */
+.theme-hc ::selection {
+  background: #ffd60a;
+  color: #000000;
+}
+
+/* THM-024 high contrast: outlined buttons */
+.theme-hc button,
+.theme-hc .btn {
+  border: 2px solid currentColor;
+}
+
+/* THM-025 high contrast: underlined links */
+.theme-hc a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* THM-026 high contrast: status legibility boost */
+.theme-hc {
+  --ok-fg: #7dffb0;
+  --warn-fg: #ffd60a;
+  --down-fg: #ff8a8a;
+  --info-fg: #9bc0ff;
+}
+
+/* THM-027 high contrast: shimmer tint */
+.theme-hc {
+  --shimmer: linear-gradient(100deg, #1a1a1a 30%, #333333 50%, #1a1a1a 70%);
+}
+
+/* THM-028 high contrast: scrollbar tokens */
+.theme-hc {
+  --scroll-track: #000000;
+  --scroll-thumb: #ffffff;
+  --scroll-thumb-hover: #ffd60a;
+}
+
+/* THM-029 compact density: spacing scale */
+.theme-compact {
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-8: 20px;
+  --space-10: 24px;
+}
+
+/* THM-030 compact density: touch target + type */
+.theme-compact {
+  --touch-min: 32px;
+  --touch-compact: 26px;
+  --lh-base: 1.4;
+}
+
+/* THM-031 compact density: card padding squeeze */
+.theme-compact .card {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+/* THM-032 compact density: small type scale */
+.theme-compact {
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-base: 12px;
+  --fs-md: 12.5px;
+  --fs-lg: 13.5px;
+}
+
+/* THM-033 compact density: table row squeeze */
+.theme-compact table td,
+.theme-compact table th {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* THM-034 comfortable density: spacing scale */
+.theme-comfortable {
+  --space-1: 6px;
+  --space-2: 10px;
+  --space-3: 16px;
+  --space-4: 20px;
+  --space-5: 26px;
+  --space-6: 32px;
+  --space-8: 44px;
+  --space-10: 56px;
+}
+
+/* THM-035 comfortable density: touch target + type */
+.theme-comfortable {
+  --touch-min: 52px;
+  --touch-compact: 40px;
+  --lh-base: 1.65;
+}
+
+/* THM-036 comfortable density: card breathing room */
+.theme-comfortable .card {
+  padding: 24px 26px;
+  gap: 18px;
+}
+
+/* THM-037 comfortable density: large type scale */
+.theme-comfortable {
+  --fs-base: 13.5px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 17.5px;
+  --fs-2xl: 20px;
+}
+
+/* THM-038 comfortable density: table row air */
+.theme-comfortable table td,
+.theme-comfortable table th {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+/* THM-039 accent-blue: hue swap tokens */
+.accent-blue {
+  --accent: #4f8cff;
+  --accent-soft: rgba(79, 140, 255, 0.14);
+  --accent-ring: rgba(79, 140, 255, 0.45);
+}
+
+/* THM-040 accent-blue: focus tie-in */
+.accent-blue {
+  --focus-outline: #7aa8ff;
+  --focus-ring: 0 0 0 3px rgba(79, 140, 255, 0.35);
+}
+
+/* THM-041 accent-green: hue swap tokens */
+.accent-green {
+  --accent: #22c55e;
+  --accent-soft: rgba(34, 197, 94, 0.14);
+  --accent-ring: rgba(34, 197, 94, 0.45);
+}
+
+/* THM-042 accent-green: focus tie-in */
+.accent-green {
+  --focus-outline: #4ade80;
+  --focus-ring: 0 0 0 3px rgba(34, 197, 94, 0.35);
+}
+
+/* THM-043 accent-amber: hue swap tokens */
+.accent-amber {
+  --accent: #f59e0b;
+  --accent-soft: rgba(245, 158, 11, 0.16);
+  --accent-ring: rgba(245, 158, 11, 0.45);
+}
+
+/* THM-044 accent-amber: focus tie-in */
+.accent-amber {
+  --focus-outline: #fbbf24;
+  --focus-ring: 0 0 0 3px rgba(245, 158, 11, 0.35);
+}
+
+/* THM-045 accent-violet: hue swap tokens */
+.accent-violet {
+  --accent: #8b5cf6;
+  --accent-soft: rgba(139, 92, 246, 0.16);
+  --accent-ring: rgba(139, 92, 246, 0.45);
+}
+
+/* THM-046 accent-violet: focus tie-in */
+.accent-violet {
+  --focus-outline: #a78bfa;
+  --focus-ring: 0 0 0 3px rgba(139, 92, 246, 0.4);
+}
+
+/* THM-047 status ok: background tint */
+:root {
+  --ok-bg: rgba(62, 207, 142, 0.12);
+}
+
+/* THM-048 status ok: foreground token */
+:root {
+  --ok-fg: #3ecf8e;
+}
+
+/* THM-049 status ok: border token */
+:root {
+  --ok-border: rgba(62, 207, 142, 0.45);
+}
+
+/* THM-050 status ok: glow token */
+:root {
+  --ok-glow: 0 0 12px rgba(62, 207, 142, 0.35);
+}
+
+/* THM-051 status warn: background tint */
+:root {
+  --warn-bg: rgba(240, 179, 92, 0.12);
+}
+
+/* THM-052 status warn: foreground token */
+:root {
+  --warn-fg: #f0b35c;
+}
+
+/* THM-053 status warn: border token */
+:root {
+  --warn-border: rgba(240, 179, 92, 0.45);
+}
+
+/* THM-054 status warn: glow token */
+:root {
+  --warn-glow: 0 0 12px rgba(240, 179, 92, 0.35);
+}
+
+/* THM-055 status down: background tint */
+:root {
+  --down-bg: rgba(240, 106, 106, 0.12);
+}
+
+/* THM-056 status down: foreground token */
+:root {
+  --down-fg: #f06a6a;
+}
+
+/* THM-057 status down: border token */
+:root {
+  --down-border: rgba(240, 106, 106, 0.5);
+}
+
+/* THM-058 status down: glow token */
+:root {
+  --down-glow: 0 0 12px rgba(240, 106, 106, 0.4);
+}
+
+/* THM-059 status info: background tint */
+:root {
+  --info-bg: rgba(79, 140, 255, 0.12);
+}
+
+/* THM-060 status info: foreground token */
+:root {
+  --info-fg: #7aa8ff;
+}
+
+/* THM-061 status info: border token */
+:root {
+  --info-border: rgba(79, 140, 255, 0.45);
+}
+
+/* THM-062 status info: glow token */
+:root {
+  --info-glow: 0 0 12px rgba(79, 140, 255, 0.35);
+}
+
+/* THM-063 scrollbar: dark default track + thumb */
+:root {
+  --scroll-track: #0b111c;
+  --scroll-thumb: #2a3a55;
+  --scroll-thumb-hover: #3b5075;
+}
+
+/* THM-064 scrollbar: webkit track styling */
+::-webkit-scrollbar-track {
+  background: var(--scroll-track, #0b111c);
+}
+
+/* THM-065 scrollbar: webkit thumb styling */
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb, #2a3a55);
+  border-radius: 999px;
+}
+
+/* THM-066 scrollbar: thumb hover state */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover, #3b5075);
+}
+
+/* THM-067 scrollbar: firefox color pairing */
+* {
+  scrollbar-color: var(--scroll-thumb, #2a3a55) var(--scroll-track, #0b111c);
+}
+
+/* THM-068 scrollbar: compact thin variant */
+.theme-compact ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+/* THM-069 selection: dark default wash */
+::selection {
+  background: rgba(79, 140, 255, 0.35);
+}
+
+/* THM-070 selection: input field wash */
+input::selection,
+textarea::selection {
+  background: rgba(79, 140, 255, 0.45);
+}
+
+/* THM-071 focus ring: visible fallback outline */
+:focus-visible {
+  outline: 2px solid var(--focus-outline, #9bc0ff);
+  outline-offset: 2px;
+}
+
+/* THM-072 focus ring: glow shadow token */
+:focus-visible {
+  box-shadow: var(--focus-ring, 0 0 0 3px rgba(122, 168, 255, 0.35));
+}
+
+/* THM-073 skeleton: dark shimmer tint */
+:root {
+  --shimmer: linear-gradient(100deg, #131e30 30%, #1c2942 50%, #131e30 70%);
+}
+
+/* THM-074 skeleton: shimmer animation hook */
+.skeleton {
+  background-image: var(--shimmer);
+}
+
+/* THM-075 chart: categorical palette tokens */
+:root {
+  --chart-1: #4f8cff;
+  --chart-2: #3ecf8e;
+  --chart-3: #f0b35c;
+  --chart-4: #b78bff;
+}
+
+/* THM-076 chart: extended palette tokens */
+:root {
+  --chart-5: #5cd6f0;
+  --chart-6: #f07aa8;
+}
+
+/* THM-077 meters: fill gradient token */
+:root {
+  --meter-fill: linear-gradient(90deg, var(--chart-1), var(--chart-2));
+}
+
+/* THM-078 meters: threshold tokens */
+:root {
+  --meter-low: var(--down-fg, #f06a6a);
+  --meter-high: var(--ok-fg, #3ecf8e);
+}
+
+/* THM-079 elevation: shadow level 1 */
+:root {
+  --shadow-1: 0 1px 2px rgba(3, 7, 14, 0.4);
+}
+
+/* THM-080 elevation: shadow level 2 */
+:root {
+  --shadow-2: 0 4px 12px rgba(3, 7, 14, 0.42);
+}
+
+/* THM-081 elevation: shadow level 3 */
+:root {
+  --shadow-3: 0 10px 30px rgba(3, 7, 14, 0.45);
+}
+
+/* THM-082 elevation: shadow level 4 */
+:root {
+  --shadow-4: 0 18px 50px rgba(3, 7, 14, 0.55);
+}
+
+/* THM-083 elevation: shadow level 5 */
+:root {
+  --shadow-5: 0 28px 80px rgba(3, 7, 14, 0.65);
+}
+
+/* THM-084 radius: small + pill tokens */
+:root {
+  --radius-sm: 9px;
+  --radius-pill: 999px;
+}
+
+/* THM-085 radius: large token */
+:root {
+  --radius-lg: 20px;
+}
+
+/* THM-086 radius: extra-large token */
+:root {
+  --radius-xl: 28px;
+}
+
+/* THM-087 type scale: base size tokens */
+:root {
+  --fs-base: 12.5px;
+  --fs-lg: 14.5px;
+}
+
+/* THM-088 type scale: display size token */
+:root {
+  --fs-3xl: 24px;
+}
+
+/* THM-089 type scale: fluid display clamp */
+:root {
+  --fs-fluid: clamp(18px, 2.4vw, 28px);
+}
+
+/* THM-090 glow: intensity control variable */
+:root {
+  --glow-strength: 1;
+}
+
+/* THM-091 glow: strength-aware accent glow */
+.glow-accent {
+  filter: drop-shadow(0 0 calc(10px * var(--glow-strength, 1)) var(--accent-ring));
+}
+
+/* THM-092 no-glow: kill-switch utility */
+.no-glow,
+.no-glow * {
+  box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+}
+
+/* THM-093 grain: overlay hook */
+.grain-on body::after {
+  content: "";
+  pointer-events: none;
+}
+
+/* THM-094 grain: overlay tuning tokens */
+:root {
+  --grain-opacity: 0.05;
+  --grain-size: 140px;
+}
+
+/* THM-095 grain: off-state utility */
+.grain-off body::after {
+  display: none !important;
+}
+
+/* THM-096 print: force light theme tokens */
+@media print {
+  :root {
+    --bg: #ffffff;
+    --bg-raised: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f2f4f8;
+    --text: #000000;
+    --text-dim: #222222;
+    --muted: #444444;
+    color-scheme: light;
+  }
+}
+
+/* THM-097 print: ink-save economy */
+@media print {
+  .no-glow,
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+}
+
+/* THM-098 print: hide interactive chrome */
+@media print {
+  button,
+  .toolbar,
+  .topbar-actions,
+  .toast-stack {
+    display: none !important;
+  }
+}
+
+/* THM-099 print: page margin setup */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+}
+
+/* THM-0100 THM-100 forced-colors: border + text anchors */
+@media (forced-colors: active) {
+  * {
+    border-color: ButtonBorder;
+  }
+}
+
+/* THM-0101 THM-101 forced-colors: accent mapping */
+@media (forced-colors: active) {
+  a,
+  .accent {
+    color: LinkText;
+  }
+}
+
+/* THM-0102 THM-102 forced-colors: selection mapping */
+@media (forced-colors: active) {
+  ::selection {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+
+/* THM-0103 THM-103 prefers-contrast: stronger lines */
+@media (prefers-contrast: more) {
+  :root {
+    --line: rgba(148, 170, 200, 0.35);
+    --line-strong: rgba(148, 170, 200, 0.6);
+  }
+}
+
+/* THM-0104 THM-104 prefers-contrast: stronger focus */
+@media (prefers-contrast: more) {
+  :focus-visible {
+    outline-width: 3px;
+  }
+}
+
+/* THM-0105 THM-105 theme transition: smooth token swap */
+.theme-anim,
+.theme-anim * {
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+/* THM-0106 THM-106 theme transition: color-scheme aware */
+.theme-light.theme-anim,
+.theme-hc.theme-anim {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+/* THM-0107 THM-107 reduced transparency: surface fallback */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --surface: #0f1624;
+  }
+}
+
+/* THM-0108 THM-108 reduced transparency: soft wash fallback */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --accent-soft: #16283f;
+  }
+}
+
+/* THM-0109 THM-109 reduced motion: calm shimmer */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* THM-0110 THM-110 comfortable: wide scrollbar variant */
+.theme-comfortable ::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}

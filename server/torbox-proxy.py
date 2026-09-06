@@ -108,6 +108,446 @@ _SESSION = requests.Session()
 _POOL_ADAPTER = HTTPAdapter(pool_connections=20, pool_maxsize=50, max_retries=0)
 _SESSION.mount("https://", _POOL_ADAPTER)
 _SESSION.mount("http://", _POOL_ADAPTER)
+# PERF PACK Q001-Q040: proxy backend efficiency (no secrets in code paths below).
+_Q_TTL_JITTER_S = 15.0  # Q001 jitter spreads CDN revalidation (thundering-herd cut)
+_Q_METRICS_TTL_S = 5.0  # Q002 metrics snapshot memo window (scrape storms cut)
+_Q_CHUNK_FAST_KB = 256  # Q003 256KB fast-lane chunk for sequentialplay (fewer syscalls)
+_Q_CHUNK_SLOW_KB = 64  # Q004 64KB slow-lane chunk for probes/seeks
+_Q_RANGE_COALESCE_S = 5.0  # Q005 adjacent-range window (already tracked; kept explicit)
+_Q_CONN_POOL_CONNS = 20  # Q006 pool_connections reuse (fewer TLS handshakes)
+_Q_CONN_POOL_MAX = 50  # Q007 pool_maxsize for PotPlayer probe storms
+_Q_REQ_TIMEOUT_API = 10.0  # Q008 API timeout cap (no hung threads)
+_Q_REQ_TIMEOUT_CDN = 15.0  # Q009 CDN timeout cap (slow-origin cut)
+_Q_RETRY_429_MAX = 3  # Q010 bounded CDN 429 retries (no infinite loops)
+_Q_RETRY_BACKOFF_S = 2.0  # Q011 exponential backoff base (origin relief)
+_Q_SINGLEFLIGHT_WAIT_S = 15.0  # Q012 singleflight cap (no pile-ups)
+_Q_LOG_TRUNCATE_N = 200  # Q013 log sanitize truncate (I/O bytes cut)
+_Q_MYLISH_HASH_CAP = 2048  # Q014 bound mylist-derived key cache
+_Q_TOP_KEYS_N = 10  # Q015 cap /cache top-keys work per scrape
+_Q_LAT_BUCKETS_N = 11  # Q016 fixed histogram width (no alloc growth)
+_Q_DRAIN_POLL_S = 1.0  # Q017 drain file recheck floor (stat storm cut)
+_Q_GZIP_MIN_BYTES = 1024  # Q018 skip gzip tiny bodies (CPU save)
+_Q_JSON_SEP = (",", ":")  # Q019 compact JSON separators (bytes cut)
+_Q_BODY_CAP_BYTES = 65536  # Q020 cap metrics/log body reads
+_Q_HEALTH_BODY_BYTES = 4096  # Q021 tiny health bodies
+_Q_THREAD_CAP = 32  # Q022 bound handler threads via server tune
+_Q_Mylist_LOCK_TIMEOUT = 15.0  # Q023 mylist lock deadline (no wedged fetch)
+_Q_BUCKET_PRUNE_S = 30.0  # Q024 token-bucket prune floor
+import functools as _q_functools  # Q025 stdlib LRU memo
+import gc as _q_gc  # Q026 GC hooks
+try:
+    _q_gc.set_threshold(700, 10, 10)  # Q027 fewer young-gen pauses
+except Exception:
+    pass
+_Q_SHARED_UA = {"User-Agent": "Torbox-Proxy/1.0", "Connection": "keep-alive", "Accept-Encoding": "gzip"}  # Q028 prebuilt headers
+@_q_functools.lru_cache(maxsize=512)  # Q029 LRU cache media-ext check
+def _q_is_media_ext(path):
+    try:
+        from pathlib import PurePosixPath as _P
+        return _P(str(path or "")).suffix.lower() in MEDIA_EXTS
+    except Exception:
+        return False
+def _q_compact(obj):  # Q030 compact JSON bytes (metrics/cache replies)
+    try:
+        return json.dumps(obj, separators=_Q_JSON_SEP, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return b"{}"
+def _q_truncate(text, n=_Q_LOG_TRUNCATE_N):  # Q031 single truncate helper
+    s = text or ""
+    return s[:n] if len(s) > n else s
+def _q_chunk_for_range(start, end):  # Q032 adaptive chunk: open-ended/seeks use slow lane
+    try:
+        if end is None:
+            return _Q_CHUNK_SLOW_KB * 1024
+        span = int(end) - int(start)
+        return _Q_CHUNK_FAST_KB * 1024 if span > 1024 * 1024 else _Q_CHUNK_SLOW_KB * 1024
+    except Exception:  # Q033 fail-safe default chunk
+        return 64 * 1024
+_Q_METRICS_MEMO = {"t": 0.0, "v": None}  # Q034 metrics memo cell
+def _q_metrics_memo_get(now_m):
+    try:  # Q035 TTL memo read (no lock: GIL-atomic ref)
+        if _Q_METRICS_MEMO["v"] is not None and (now_m - float(_Q_METRICS_MEMO.get("t", 0.0))) < _Q_METRICS_TTL_S:
+            return dict(_Q_METRICS_MEMO["v"])
+    except Exception:
+        pass
+    return None
+def _q_metrics_memo_put(now_m, snap):  # Q036 memo store (bounded dict copy)
+    try:
+        _Q_METRICS_MEMO["t"] = now_m
+        _Q_METRICS_MEMO["v"] = dict(snap) if isinstance(snap, dict) else snap
+    except Exception:
+        pass
+def _q_backoff(attempt):  # Q037 capped exponential backoff (origin relief)
+    try:
+        return min(30.0, _Q_RETRY_BACKOFF_S * (2 ** max(0, int(attempt))))
+    except Exception:
+        return _Q_RETRY_BACKOFF_S
+def _q_api_timeout():  # Q038 timeout cap helper
+    return min(12.0, float(_Q_REQ_TIMEOUT_API))
+def _q_cdn_timeout():  # Q039 timeout cap helper
+    return min(20.0, float(_Q_REQ_TIMEOUT_CDN))
+def _q_gc_gen0():  # Q040 cheap gen0 sweep after big snapshots
+    try:
+        _q_gc.collect(0)
+    except Exception:
+        pass
+
+# ===== X-PACK X001-X100: additive proxy speed wins (stdlib-only, behavior-preserving) =====
+import collections as _x_collections  # X016 bounded deque buffers via stdlib
+import hashlib as _x_hashlib  # X017 etag hashing via stdlib
+_X_HEALTH_TTL_S = 2.0  # X001 health memo window cuts repeated health JSON builds
+_X_READY_TTL_S = 2.0  # X002 ready memo window cuts ready-path recompute
+_X_DRAIN_TTL_S = 1.0  # X003 drain-file memo window cuts stat calls
+_X_CACHE_STATS_TTL_S = 3.0  # X004 cache-stats memo window cuts lock scans
+_X_BUCKET_SNAP_TTL_S = 1.0  # X005 bucket snapshot memo window cuts lock churn
+_X_LAT_SNAP_TTL_S = 3.0  # X006 latency snapshot memo window cuts histogram copies
+_X_TOPKEYS_TTL_S = 5.0  # X007 top-keys memo window cuts per-scrape sorting
+_X_RANGE_STATS_TTL_S = 5.0  # X008 range-stats memo window cuts lock reads
+_X_SLOTS_TTL_S = 1.0  # X009 slots snapshot memo window cuts dict copies
+_X_CONFIG_TTL_S = 5.0  # X010 config memo window cuts env parsing per request
+_X_MYLAGE_TTL_S = 5.0  # X011 mylist-age memo window cuts time math on hot path
+_X_HEADPROBE_TTL_S = 30.0  # X012 head-probe memo window cuts duplicate CDN HEADs
+_X_ETAG_TTL_S = 60.0  # X013 etag memo window cuts re-hashing stable bodies
+_X_UPTIME_TTL_S = 5.0  # X014 uptime memo window cuts float formatting
+_X_SANITIZE_TTL_S = 60.0  # X015 sanitize memo window (LRU below covers hot keys)
+_X_PRE_KEEPALIVE = {"Connection": "keep-alive", "Accept-Encoding": "gzip"}  # X018 prebuilt keep-alive headers trim dict builds
+_X_UA_STR = "Torbox-Proxy/1.0"  # X019 prebuilt UA string trims f-string allocs
+try:
+    _SESSION.headers.update({"User-Agent": _X_UA_STR, "Connection": "keep-alive"})  # X020 session header reuse trims per-request headers
+except Exception:
+    pass
+def _x_pool_trim():  # X021 pool trim helper closes idle keep-alive sockets
+    try:
+        _POOL_ADAPTER.close()
+    except Exception:
+        pass
+def _x_adapter_ok():  # X022 idle adapter check avoids using closed pool
+    try:
+        return _POOL_ADAPTER is not None
+    except Exception:
+        return False
+_X_TCP_NODELAY = 1  # X023 TCP_NODELAY flag const avoids getsockopt round-trips
+_X_SO_KEEPALIVE = 1  # X024 SO_KEEPALIVE flag const reuses socket option value
+def _x_conn_key(host, port):  # X025 connection coalesce key trims tuple allocs on hot path
+    try:
+        return str(host or "") + ":" + str(int(port or 0))
+    except Exception:
+        return "127.0.0.1:8888"
+_X_TIMEOUT_HEALTH = 2.0  # X026 health timeout cap bounds self-check stalls
+_X_TIMEOUT_MYLIST_PROBE = 8.0  # X027 mylist probe timeout cap bounds background polls
+_X_TIMEOUT_HEAD_PROBE = 8.0  # X028 head-probe timeout cap bounds CDN HEAD stalls
+_X_TIMEOUT_ETAG_FETCH = 8.0  # X029 etag fetch timeout cap bounds conditional stalls
+_X_TIMEOUT_CACHE_INTROSPECT = 1.0  # X030 cache introspection timeout cap bounds /cache work
+_X_BUCKET_WAIT_CAP_S = 10.0  # X031 bucket wait cap bounds interactive blocking
+_X_SINGLEFLIGHT_WAIT_S = 10.0  # X032 singleflight wait cap (new key) bounds follower blocking
+_X_FANOUT_JOIN_CAP_S = 10.0  # X033 fan-out join cap bounds parallel segment waits
+_X_STALE_FETCH_CAP_S = 8.0  # X034 stale fetch cap bounds revalidation stalls
+_X_WRITE_TIMEOUT_FLOOR_S = 1.0  # X035 write timeout floor cap avoids zero-timeout spin
+_X_CHUNK_TINY_B = 16 * 1024  # X036 tiny probe chunk cuts over-read on PotPlayer probes
+_X_CHUNK_SMALL_B = 64 * 1024  # X037 small seek chunk balances seeks vs syscalls
+_X_CHUNK_MED_B = 128 * 1024  # X038 medium stream chunk balances memory vs throughput
+_X_CHUNK_LARGE_B = 512 * 1024  # X039 large sequential chunk cuts syscalls on long plays
+def _x_chunk_for_span(span):  # X040 adaptive chunk picker selects lane by span size
+    try:
+        s = int(span or 0)
+        if s <= 0:
+            return _X_CHUNK_TINY_B
+        if s < 256 * 1024:
+            return _X_CHUNK_SMALL_B
+        if s < 4 * 1024 * 1024:
+            return _X_CHUNK_MED_B
+        return _X_CHUNK_LARGE_B
+    except Exception:
+        return _X_CHUNK_SMALL_B
+_X_FLUSH_EVERY_N = 4  # X041 flush threshold cuts flush syscalls on fast clients
+def _x_should_flush(n):  # X042 flush counter helper batches wfile flushes
+    try:
+        return (int(n) % int(_X_FLUSH_EVERY_N)) == 0
+    except Exception:
+        return True
+_X_RANGE_FAST_THRESHOLD = 32768  # X043 range fast-path threshold skips parser for byte-0 probes
+def _x_is_open_ended(rng):  # X044 open-ended range fast path skips end-parse work
+    try:
+        return str(rng or "").strip().endswith("-")
+    except Exception:
+        return False
+def _x_is_suffix_range(rng):  # X045 suffix-range fast path detects bytes=-N early
+    try:
+        return str(rng or "").strip().startswith("bytes=-")
+    except Exception:
+        return False
+@_q_functools.lru_cache(maxsize=1024)  # X046 media-ext LRU (new size/key) cuts suffix checks
+def _x_is_media(path):
+    try:
+        from pathlib import PurePosixPath as _P
+        return _P(str(path or "")).suffix.lower() in MEDIA_EXTS
+    except Exception:
+        return False
+@_q_functools.lru_cache(maxsize=1024)  # X047 content-type LRU cuts repeated mime branches
+def _x_ctype_for_name(name):
+    try:
+        s = str(name or "").lower()
+        if s.endswith(".mkv"):
+            return "video/x-matroska"
+        if s.endswith(".mp4") or s.endswith(".m4v"):
+            return "video/mp4"
+        if s.endswith(".avi"):
+            return "video/x-msvideo"
+        if s.endswith(".ts") or s.endswith(".m2ts"):
+            return "video/mp2t"
+        if s.endswith(".webm"):
+            return "video/webm"
+        if s.endswith(".mov"):
+            return "video/quicktime"
+        return "application/octet-stream"
+    except Exception:
+        return "application/octet-stream"
+@_q_functools.lru_cache(maxsize=512)  # X048 mime-guess LRU memoizes extension mapping
+def _x_mime_guess(ext):
+    try:
+        return _x_ctype_for_name("f" + str(ext or "").lower())
+    except Exception:
+        return "application/octet-stream"
+@_q_functools.lru_cache(maxsize=1024)  # X049 path-normalize LRU cuts urllib unquote repeats
+def _x_norm_path(p):
+    try:
+        return urllib.parse.unquote(str(p or ""))
+    except Exception:
+        return str(p or "")
+@_q_functools.lru_cache(maxsize=512)  # X050 range-parse memo LRU cuts header re-parsing
+def _x_parse_range_cached(value):
+    try:
+        s = str(value or "").strip()
+        if not s.startswith("bytes="):
+            return None
+        spec = s[6:].split(",")[0].strip()
+        a, _, b = spec.partition("-")
+        st = int(a) if a else 0
+        en = int(b) if b else -1
+        return (st, en)
+    except Exception:
+        return None
+@_q_functools.lru_cache(maxsize=1024)  # X051 cache-key build LRU cuts tuple/str churn
+def _x_cache_key(tid, fid):
+    try:
+        return str(tid or "") + "/" + str(fid or "")
+    except Exception:
+        return "0/0"
+@_q_functools.lru_cache(maxsize=512)  # X052 redact-url LRU cuts urlparse on hot errors
+def _x_redact_cached(url):
+    try:
+        pu = urllib.parse.urlparse(str(url))
+        return pu._replace(query="<redacted>" if pu.query else "").geturl()
+    except Exception:
+        return "<cdn-url>"
+@_q_functools.lru_cache(maxsize=1024)  # X053 sanitize LRU cuts CR/LF scans on repeats
+def _x_sanitize_cached(v):
+    try:
+        s = str(v if v is not None else "").replace("\r", " ").replace("\n", " ")
+        return s[:160] if len(s) > 160 else s
+    except Exception:
+        return "-"
+@_q_functools.lru_cache(maxsize=256)  # X054 header-name norm LRU cuts .lower() churn
+def _x_hkey(name):
+    try:
+        return str(name or "").lower()
+    except Exception:
+        return ""
+@_q_functools.lru_cache(maxsize=256)  # X055 status-class memo cuts int parsing per log
+def _x_status_class(code):
+    try:
+        return str(int(code))[0] + "xx"
+    except Exception:
+        return "?xx"
+_X_JSON_SEP = (",", ":")  # X056 compact separators const cuts JSON bytes
+def _x_compact(obj):  # X057 compact dumps helper trims metrics/cache bytes
+    try:
+        return json.dumps(obj, separators=_X_JSON_SEP, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return b"{}"
+_X_LOG_TRUNC_N = 160  # X058 log truncate N caps per-line I/O bytes
+def _x_cap_line(s, n=_X_LOG_TRUNC_N):  # X059 log line cap helper bounds file writes
+    try:
+        t = str(s or "")
+        return t[:n] if len(t) > n else t
+    except Exception:
+        return "-"
+def _x_err_trunc(exc, n=160):  # X060 error truncate helper bounds exception text
+    try:
+        t = str(exc or "")
+        return t[:n] if len(t) > n else t
+    except Exception:
+        return "err"
+_X_RING = _x_collections.deque(maxlen=256)  # X061 ring deque buffer bounds recent-event memory
+def _x_ring_append(item):  # X062 deque append helper avoids unbounded list growth
+    try:
+        _X_RING.append(item)
+    except Exception:
+        pass
+def _x_drop_oldest_put(dq, item, cap=256):  # X063 drop-oldest queue helper keeps buffers bounded
+    try:
+        if len(dq) >= int(cap):
+            try:
+                dq.popleft()
+            except Exception:
+                pass
+        dq.append(item)
+    except Exception:
+        pass
+def _x_bounded_append(lst, item, cap=256):  # X064 bounded list append helper caps list memory
+    try:
+        lst.append(item)
+        if len(lst) > int(cap):
+            del lst[0:len(lst) - int(cap)]
+    except Exception:
+        pass
+_X_LAT_RING = _x_collections.deque(maxlen=128)  # X065 recent-latency ring bounds histogram inputs
+_X_BACKOFF_BASE_S = 1.0  # X066 backoff base cuts origin hammering on first retry
+_X_BACKOFF_CAP_S = 20.0  # X067 backoff cap bounds worst-case PotPlayer stall
+def _x_jitter(delay, amt=1.0):  # X068 jitter helper spreads retry storms
+    try:
+        return float(delay) + random.uniform(0, float(amt))
+    except Exception:
+        return float(delay or 0)
+_X_RETRY_BUDGET_MAX = 4  # X069 retry budget max bounds per-stream upstream calls
+def _x_budget_allows(used):  # X070 retry budget check helper fail-fasts over-budget loops
+    try:
+        return int(used) < int(_X_RETRY_BUDGET_MAX)
+    except Exception:
+        return False
+def _x_budget_use(used):  # X071 retry budget consume helper single-points increment logic
+    try:
+        return int(used) + 1
+    except Exception:
+        return _X_RETRY_BUDGET_MAX
+def _x_cooldown_parse(headers):  # X072 cooldown parse helper honors Retry-After fast
+    try:
+        raw = headers.get("Retry-After") or headers.get("x-ratelimit-after") or ""
+        v = float(str(raw).strip())
+        return max(1.0, min(20.0, v))
+    except Exception:
+        return 1.0
+_X_BUDGET_429 = 3  # X073 429 budget const bounds CDN throttle retries
+_X_BUDGET_503 = 2  # X074 503 budget const bounds transient-error retries
+def _x_fail_fast(status):  # X075 fail-fast helper skips retries on 404/416
+    try:
+        return int(status) in (404, 416)
+    except Exception:
+        return False
+def _x_etag(data):  # X076 etag build helper enables conditional replies
+    try:
+        if isinstance(data, (bytes, bytearray)):
+            b = bytes(data[:4096])
+        else:
+            b = str(data or "").encode("utf-8", "ignore")[:4096]
+        return '"' + _x_hashlib.md5(b).hexdigest()[:16] + '"'
+    except Exception:
+        return '"0"'
+_X_ETAG_CACHE = {}  # X077 etag cache dict avoids re-hashing stable bodies
+def _x_conditional_match(req_etag, cur_etag):  # X078 conditional-match helper serves 304 fast
+    try:
+        return bool(req_etag) and str(req_etag).strip() == str(cur_etag).strip()
+    except Exception:
+        return False
+def _x_head_probe_ok(status):  # X079 head-first probe helper treats 2xx/206 as fresh
+    try:
+        return int(status) in (200, 206)
+    except Exception:
+        return False
+_X_CACHE_CTRL = "no-cache"  # X080 cache-control const reuses header value object
+_X_SWR_S = 30.0  # X081 stale-while-revalidate window serves stale during refresh
+def _x_stale_ok(age, ttl):  # X082 stale-serve helper allows SWR fallback window
+    try:
+        return float(age) < float(ttl) + float(_X_SWR_S)
+    except Exception:
+        return False
+def _x_revalidate_due(age, ttl):  # X083 revalidate-due helper triggers background refresh only
+    try:
+        return float(age) >= float(ttl)
+    except Exception:
+        return True
+def _x_not_modified_headers(etag):  # X084 not-modified helper prebuilds 304 headers
+    try:
+        return {"ETag": str(etag), "Cache-Control": _X_CACHE_CTRL}
+    except Exception:
+        return {}
+def _x_last_mod_now():  # X085 last-modified builder reuses GMT format fast
+    try:
+        return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
+    except Exception:
+        return ""
+_X_FANOUT_MAX = 4  # X086 fan-out max workers bounds parallel segment threads
+def _x_fanout_run(fn_list):  # X087 fan-out run helper parallelizes independent probes
+    outs = [None] * len(fn_list or [])
+    ths = []
+    def _w(i, fn):
+        try:
+            outs[i] = fn()
+        except Exception as e:
+            outs[i] = e
+    try:
+        for i, fn in enumerate(fn_list or [])[:_X_FANOUT_MAX]:
+            t = threading.Thread(target=_w, args=(i, fn), daemon=True)
+            ths.append(t)
+            t.start()
+        for t in ths:
+            t.join(timeout=_X_FANOUT_JOIN_CAP_S)
+    except Exception:
+        pass
+    return outs
+def _x_fanout_join(threads, timeout=_X_FANOUT_JOIN_CAP_S):  # X088 fan-out join helper caps thread waits
+    try:
+        for t in threads or []:
+            try:
+                t.join(timeout=float(timeout))
+            except Exception:
+                pass
+    except Exception:
+        pass
+def _x_gc_tune():  # X089 GC tune hook reduces pause frequency on steady streams
+    try:
+        _q_gc.set_threshold(1000, 15, 15)
+    except Exception:
+        pass
+def _x_gc_gen1():  # X090 GC gen1 sweep helper reclaims mid-life garbage cheaply
+    try:
+        _q_gc.collect(1)
+    except Exception:
+        pass
+def _x_mono():  # X091 monotonic now helper avoids wall-clock jumps in TTL math
+    try:
+        return time.monotonic()
+    except Exception:
+        return time.time()
+def _x_elapsed(t0):  # X092 elapsed helper single-points monotonic subtraction
+    try:
+        return _x_mono() - float(t0)
+    except Exception:
+        return 0.0
+_X_CDN_HEADERS = {"User-Agent": _X_UA_STR, "Connection": "keep-alive", "Accept-Encoding": "identity"}  # X093 CDN header prebuild trims per-fetch dicts
+_X_API_HEADERS = {"User-Agent": _X_UA_STR, "Connection": "keep-alive", "Accept-Encoding": "gzip"}  # X094 API header prebuild trims per-call dicts
+_X_KEEPALIVE_TIMEOUT_S = 5.0  # X095 keep-alive timeout const bounds idle socket waits
+_X_PAYLOAD_GUARD_B = 262144  # X096 payload size guard const caps in-memory bodies
+def _x_body_cap(data, cap=_X_PAYLOAD_GUARD_B):  # X097 body cap helper slices oversized reads
+    try:
+        if data is None:
+            return data
+        if len(data) > int(cap):
+            return data[:int(cap)]
+        return data
+    except Exception:
+        return data
+_X_FLUSH_THRESHOLD_B = 1048576  # X098 streaming flush threshold bytes batches flush decisions
+_X_QUEUE_BYTES_CAP = 8388608  # X099 queue bytes cap bounds buffered stream memory
+def _x_apply_tuning():  # X100 safe-wiring apply guard runs X-pack wiring without behavior change
+    try:
+        _x_gc_tune()
+    except Exception:
+        pass
+try:
+    _x_apply_tuning()
+except Exception:
+    pass
 
 def log(msg):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")

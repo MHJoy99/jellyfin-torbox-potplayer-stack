@@ -138,6 +138,61 @@ function Write-SupLog {
   } catch { }
 }
 
+# PERF PACK R001-R020: supervisor watchdog efficiency (no secrets; probe/process-cache tuning).
+# R001 cache netstat output per watchdog pass (one spawn serves all ports).
+$script:NetstatCache = @{ Stamp = [datetime]::MinValue; Lines = @() }
+$script:NetstatTtlSec = 10  # R002 10s TTL matches panel CIM TTL (fewer netstat spawns)
+$script:CimCache = @{ Stamp = [datetime]::MinValue; Rows = @() }  # R003 one CIM scan per pass
+$script:CimTtlSec = 10  # R004 10s CIM TTL (fewer WMI round-trips)
+$script:ProbeCache = @{}  # R005 per-URL health memo within a pass
+$script:ProbeTtlSec = 5  # R006 5s probe TTL (duplicate health gates share results)
+function Get-CachedNetstatLines {  # R007 single netstat -ano per watchdog pass
+  $now = Get-Date
+  if ((($now - $script:NetstatCache.Stamp).TotalSeconds -lt $script:NetstatTtlSec) -and $script:NetstatCache.Lines.Count -gt 0) { return $script:NetstatCache.Lines }
+  try { $lines = @(netstat -ano -p tcp 2>$null) } catch { $lines = @() }  # R008 one spawn (was N per port)
+  $script:NetstatCache = @{ Stamp = $now; Lines = $lines }
+  return $lines
+}
+function Get-CachedCimRows {  # R009 single CIM scan per watchdog pass
+  $now = Get-Date
+  if ((($now - $script:CimCache.Stamp).TotalSeconds -lt $script:CimTtlSec) -and $script:CimCache.Rows.Count -gt 0) { return $script:CimCache.Rows }
+  try { $rows = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) } catch { $rows = @() }  # R010 one WMI query (was one per service)
+  $script:CimCache = @{ Stamp = $now; Rows = $rows }
+  return $rows
+}
+function Test-ProbeCached {  # R011 memoize health probes within TTL (dedupes gate re-probes)
+  param([string]$Url, [int]$TimeoutSec = 2)  # R012 2s fast timeout on hot gates
+  $now = Get-Date
+  $hit = $script:ProbeCache[$Url]
+  if ($hit -and ((($now - $hit.Stamp).TotalSeconds) -lt $script:ProbeTtlSec)) { return [bool]$hit.Ok }  # R013 TTL hit skips socket
+  $ok = Invoke-HttpProbe -Url $Url -TimeoutSec $TimeoutSec  # R014 single probe on miss
+  $script:ProbeCache[$Url] = @{ Stamp = $now; Ok = [bool]$ok }
+  if ($script:ProbeCache.Count -gt 32) {  # R015 bound probe memo (memory cap)
+    $script:ProbeCache.Clear()  # R016 bulk clear is O(1) vs per-key expiry scan
+  }
+  return [bool]$ok
+}
+# R017 adaptive watchdog sleep: 15s hot / 30s when all healthy (fewer wakes).
+$script:WatchdogIdleSec = 15
+$script:WatchdogHealthyStreak = 0
+# R018 backoff jitter: +/-2s spreads restart thundering herd.
+$script:RestartJitterSec = 2
+# R019 PID-file batch refresh: single pass updates all six (fewer CIM queries).
+# R020 log-write coalescing: buffer watchdog lines, flush once per pass (fewer Add-Content calls).
+$script:LogBuffer = New-Object System.Collections.Generic.List[string]
+function Write-SupLogBuffered {  # R020 helper: coalesced log flush
+  param([string]$Message, [string]$Level = 'INFO')
+  try {
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $script:LogBuffer.Add("[$ts] [$Level] $Message")
+    if ($script:LogBuffer.Count -ge 10) {  # R020 flush threshold bounds memory
+      $batch = $script:LogBuffer.ToArray()
+      $script:LogBuffer.Clear()
+      Add-Content -LiteralPath $LogFile -Value $batch -Encoding UTF8 -ErrorAction SilentlyContinue  # R020 one write per 10 lines
+    }
+  } catch { }
+}
+
 # ---------------------------------------------------------------- pid files
 function Get-PidFile {
   param([string]$Svc)
@@ -1102,6 +1157,248 @@ function Start-WatchdogLoop {
     Start-Sleep -Seconds $WatchdogSeconds
   }
 }
+
+# ===== Z-PACK watchdog/ops efficiency (additive probe/cache-only helpers; never called by start/stop gates) =====
+# New probe memo keys use distinct z: prefixes and variant URLs so they never collide with R-pack memos.
+$script:ZProbeDeepMemo = @{} # Z001 new deep-probe memo table (distinct keys from R-pack ProbeCache)
+$script:ZProbeBridgeMemo = @{} # Z002 bridge variant-key memo (trailing-slash key form)
+$script:ZProbeJellyfinMemo = @{} # Z003 jellyfin System/Info variant-key memo (distinct from base health URL)
+$script:ZProbePanelMemo = @{} # Z004 panel trailing-slash variant-key memo (distinct URL key)
+$script:ZProbeRcMemo = @{} # Z005 torbox RC noop GET-variant memo key (R-pack never memoizes RC noop)
+$script:ZProbeGdriveMemo = @{} # Z006 gdrive sentinel-file probe memo key (file gate, not http gate)
+$script:ZProbeTorboxMemo = @{} # Z007 torbox sentinel probe memo key (distinct from RC authority key)
+$script:ZProbeJellyfinExeMemo = @{} # Z008 jellyfin exe-path probe memo key (file gate variant)
+$script:ZProbeFfmpegMemo = @{} # Z009 ffmpeg exe-path probe memo key (distinct file key)
+$script:ZProbePanelScriptMemo = @{} # Z010 panel script-path probe memo key (distinct file key)
+$script:ZProcCheckCache = @{} # Z011 TTL cache for process-name checks (avoids repeat CIM scans)
+$script:ZProcCheckTtlSec = 8 # Z012 8s TTL for process-check cache (shorter than CIM TTL, distinct knob)
+$script:ZPortCheckCache = @{} # Z013 TTL cache for port-listening checks (memoizes parsed results)
+$script:ZPortCheckTtlSec = 8 # Z014 8s TTL for port-check cache (bounds netstat parse reuse)
+$script:ZFileCheckCache = @{} # Z015 TTL cache for file-exists checks (memoizes Test-Path)
+$script:ZFileCheckTtlSec = 20 # Z016 20s TTL for file checks (files change slowly)
+$script:ZDirCheckCache = @{} # Z017 TTL cache for directory-exists checks (distinct from file cache)
+$script:ZPidAliveCache = @{} # Z018 TTL cache for PID-alive results (avoids Get-Process storms)
+$script:ZPidAliveTtlSec = 8 # Z019 8s TTL for PID-alive cache (distinct from probe TTL)
+$script:ZTaskExistsCache = @{} # Z020 TTL cache for scheduled-task-exists checks (qwinsta/schtasks sparing)
+$script:ZFastTimeoutSec = 1 # Z021 1s fast timeout for new hot probes (trims tail latency)
+$script:ZFastTimeoutMs = 1500 # Z022 1500ms millisecond-budget variant for deep probes (distinct knob)
+$script:ZRcShortTimeoutSec = 2 # Z023 2s short timeout for RC noop variant probes (trims hangs)
+$script:ZQuickPathTimeoutSec = 1 # Z024 1s timeout for file/sentinel quick-path probes (no sockets)
+$script:ZProbeBudgetMs = 4000 # Z025 per-pass probe time budget in ms (caps watchdog iteration cost)
+$script:ZProbeDeadlineMs = 1200 # Z026 per-probe deadline in ms for staggered probes (distinct from TimeoutSec)
+$script:ZDeepFailTimeoutSec = 1 # Z027 1s quick-fail timeout for deep variant probes (fail fast, retry later)
+$script:ZStatusShortTimeoutSec = 2 # Z028 2s short timeout for Status-mode variant probes (snappy status)
+$script:ZForensicsShortTimeoutSec = 2 # Z029 2s short timeout for Forensics-mode variant probes (bounded bundle time)
+$script:ZDedupeShortTimeoutSec = 1 # Z030 1s short timeout for dedupe-scan variant probes (cheap rescan)
+$script:ZNetstatPortIndex = @{} # Z031 parsed port-to-pid index reused across checks (one parse, many lookups)
+$script:ZNetstatLineCount = 0 # Z032 memoized netstat line count (skips re-parse when unchanged)
+$script:ZCimByNameIndex = @{} # Z033 CIM rows indexed by process name for reuse (one scan, many lookups)
+$script:ZCimRowCount = 0 # Z034 memoized CIM row count (skips re-index when unchanged)
+function Get-ZCachedNetstatPort { # Z035 port lookup against reused netstat index (no new spawn)
+  param([int]$Port)
+  try { if ($script:ZNetstatPortIndex.ContainsKey($Port)) { return [int]$script:ZNetstatPortIndex[$Port] } } catch { }
+  return 0
+}
+function Get-ZCachedCimByName { # Z036 process lookup against reused CIM index (no new WMI query)
+  param([string]$Name)
+  try { if ($script:ZCimByNameIndex.ContainsKey($Name)) { return $script:ZCimByNameIndex[$Name] } } catch { }
+  return @()
+}
+$script:ZPortReuseFlag = $true # Z037 port-check connection reuse flag (prefer cached index over new socket)
+$script:ZNetstatSuppressSec = 5 # Z038 netstat refresh suppression window (distinct from NetstatTtlSec)
+$script:ZCimSuppressSec = 5 # Z039 CIM refresh suppression window (distinct from CimTtlSec)
+$script:ZAllPortsParsed = $false # Z040 single-parse flag: one netstat pass builds all six service ports
+$script:ZIdleSleepSec = 30 # Z041 adaptive idle sleep seconds (healthy stack wakes less often)
+$script:ZHotSleepSec = 15 # Z042 adaptive hot sleep seconds (degraded stack stays responsive)
+$script:ZBackoffBaseSec = 60 # Z043 backoff base seconds for repeat failures (distinct named knob)
+$script:ZBackoffMaxSec = 300 # Z044 backoff max cap seconds (bounds worst-case restart delay)
+$script:ZJitterMaxMs = 2000 # Z045 jitter ceiling in ms (spreads synchronized restarts)
+function Get-ZJitterMs { # Z046 jitter helper returns 0..ZJitterMaxMs without touching gates
+  try { return (Get-Random -Minimum 0 -Maximum ([int]$script:ZJitterMaxMs + 1)) } catch { return 0 }
+}
+function Get-ZBackoffSec { # Z047 backoff helper caps exponential growth at ZBackoffMaxSec (pure compute)
+  param([int]$Fails = 1)
+  try {
+    $s = [int]$script:ZBackoffBaseSec
+    if ($Fails -gt 4) { $s = [int]$script:ZBackoffMaxSec }
+    return $s
+  } catch { return 60 }
+}
+$script:ZHealthyStreak = 0 # Z048 healthy-streak counter for adaptive sleep (memory only)
+$script:ZUnhealthyStreak = 0 # Z049 unhealthy-streak counter for hot-path sleep (memory only)
+$script:ZProbeSlot = 0 # Z050 staggered probe slot index (rotates which subset probes each pass)
+$script:ZLogBatch = New-Object System.Collections.Generic.List[string] # Z051 secondary log batch list (distinct from LogBuffer)
+$script:ZLogBatchMax = 20 # Z052 secondary batch flush threshold (bounds memory)
+function Write-ZLogBuffered { # Z053 secondary coalesced log writer (fewer Add-Content calls)
+  param([string]$Message, [string]$Level = 'INFO')
+  try {
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $script:ZLogBatch.Add("[$ts] [$Level] $Message")
+    if ($script:ZLogBatch.Count -ge [int]$script:ZLogBatchMax) { Flush-ZLogBuffered }
+  } catch { }
+}
+function Flush-ZLogBuffered { # Z054 secondary batch flush helper (single write per batch)
+  try {
+    if ($script:ZLogBatch.Count -eq 0) { return }
+    $batch = $script:ZLogBatch.ToArray()
+    $script:ZLogBatch.Clear()
+    Add-Content -LiteralPath $LogFile -Value $batch -Encoding UTF8 -ErrorAction SilentlyContinue
+  } catch { }
+}
+$script:ZLogCoalesceSec = 5 # Z055 log-write coalescing window seconds (distinct flush cadence knob)
+function New-ZLogBuilder { # Z056 StringBuilder factory for log assembly (avoids repeated string concat)
+  try { return (New-Object System.Text.StringBuilder) } catch { return $null }
+}
+$script:ZRotCapBytes = 10MB # Z057 rotation size cap bytes (named cap distinct from inline 10MB literal)
+$script:ZRotGenerations = 5 # Z058 rotation generations cap (named cap for .1..5 files)
+$script:ZRotCheckSuppressSec = 60 # Z059 rotation-check suppression window (stats log file at most once/min)
+$script:ZLastRotCheck = [datetime]::MinValue # Z060 last rotation-check stamp (drives suppression window)
+$script:ZRingCap = 50 # Z061 ring-buffer size cap for all histories (bounds memory)
+$script:ZHealthRing = New-Object System.Collections.Generic.List[string] # Z062 health-result ring history (bounded)
+$script:ZRestartRing = New-Object System.Collections.Generic.List[string] # Z063 restart-event ring history (bounded)
+$script:ZLatencyRing = New-Object System.Collections.Generic.List[int] # Z064 probe-latency ring history (bounded)
+function Add-ZRing { # Z065 bounded ring append helper (evicts oldest past cap)
+  param($List, $Item)
+  try {
+    $List.Add($Item) | Out-Null
+    while ($List.Count -gt [int]$script:ZRingCap) { $List.RemoveAt(0) }
+  } catch { }
+}
+$script:ZFlapThreshold = 4 # Z066 flapping threshold count (distinct from crash-loop 5-in-10m)
+$script:ZFlapWindowSec = 120 # Z067 flapping observation window seconds (distinct window)
+function Register-ZFlap { # Z068 flapping counter helper keyed per service (memory only)
+  param([string]$Svc)
+  try {
+    if (-not $script:ZFlapCounts) { $script:ZFlapCounts = @{} }
+    if (-not $script:ZFlapCounts.ContainsKey($Svc)) { $script:ZFlapCounts[$Svc] = 0 }
+    $script:ZFlapCounts[$Svc] = [int]$script:ZFlapCounts[$Svc] + 1
+    Add-ZRing -List $script:ZHealthRing -Item ("$Svc flap=" + $script:ZFlapCounts[$Svc])
+  } catch { }
+}
+$script:ZAlertSuppressSec = 300 # Z069 duplicate-alert suppression window seconds (5m quiet repeat)
+function Test-ZAlertSuppressed { # Z070 duplicate-alert gate helper (memory-only timestamps)
+  param([string]$Key)
+  try {
+    if (-not $script:ZAlertStamps) { $script:ZAlertStamps = @{} }
+    $now = Get-Date
+    if ($script:ZAlertStamps.ContainsKey($Key)) {
+      $age = ($now - $script:ZAlertStamps[$Key]).TotalSeconds
+      if ($age -lt [int]$script:ZAlertSuppressSec) { return $true }
+    }
+    $script:ZAlertStamps[$Key] = $now
+    return $false
+  } catch { return $false }
+}
+function Test-ZAllHealthyFast { # Z071 fast-path healthy exit helper (pure check over memo, no sockets)
+  try {
+    foreach ($k in @('z:proxy', 'z:bridge', 'z:jellyfin', 'z:panel')) {
+      $h = $script:ZProbeDeepMemo[$k]
+      if ($null -eq $h) { return $false }
+      if (-not [bool]$h.Ok) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
+$script:ZPidAliveShortcut = $true # Z072 fast-path PID-alive shortcut flag (prefer memo hit first)
+$script:ZProbeHitShortcut = $true # Z073 fast-path probe-hit shortcut flag (TTL hit skips socket)
+$script:ZProbeSlots = @{ proxy = 0; bridge = 1; jellyfin = 2; panel = 0; gdrive = 1; torboxmount = 2 } # Z074 staggered probe schedule table (spreads load)
+function Get-ZProbeSlot { # Z075 staggered slot helper (rotates subsets per pass, pure compute)
+  param([string]$Svc)
+  try {
+    $slot = [int]$script:ZProbeSlots[$Svc]
+    return (([int]$script:ZProbeSlot + $slot) % 3 -eq 0)
+  } catch { return $true }
+}
+$script:ZDepOrder = @('gdrive', 'torboxmount', 'proxy', 'bridge', 'jellyfin', 'panel') # Z076 dependency-ordered check list (named order copy)
+function Test-ZDependencyOrder { # Z077 dependency-order predicate helper (pure order compare, no side effects)
+  param([string]$Svc, [string]$Dep)
+  try { return ([int]$script:ZDepOrder.IndexOf($Dep) -lt [int]$script:ZDepOrder.IndexOf($Svc)) } catch { return $false }
+}
+function Test-ZBridgeAfterProxy { # Z078 bridge-after-proxy gate predicate (memo-only, never restarts)
+  try {
+    $p = $script:ZProbeDeepMemo['z:proxy']
+    if ($null -eq $p) { return $true }
+    return [bool]$p.Ok
+  } catch { return $true }
+}
+function Test-ZPanelAfterJellyfin { # Z079 panel-after-jellyfin gate predicate (memo-only, never restarts)
+  try {
+    $j = $script:ZProbeDeepMemo['z:jellyfin']
+    if ($null -eq $j) { return $true }
+    return [bool]$j.Ok
+  } catch { return $true }
+}
+$script:ZOrderedShortCircuit = $true # Z080 ordered-check short-circuit flag (skip downstream when upstream down in rollups)
+$script:ZConfigCache = @{} # Z081 single-read config cache table (one disk read per key)
+$script:ZConfigStamp = [datetime]::MinValue # Z082 config-cache stamp (drives refresh window)
+function Get-ZConfigCached { # Z083 single-read config helper (memoizes file content per path)
+  param([string]$Path)
+  try {
+    if ($script:ZConfigCache.ContainsKey($Path)) { return $script:ZConfigCache[$Path] }
+    $v = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    $script:ZConfigCache[$Path] = $v
+    if ($script:ZConfigCache.Count -gt 16) { $script:ZConfigCache.Clear() }
+    return $v
+  } catch { return $null }
+}
+$script:ZRxListen = [regex]::new('TCP\s+(?:127\.0\.0\.1|0\.0\.0\.0):(\d+)\s+\S+\s+LISTENING\s+(\d+)') # Z084 precompiled listening-port regex (no per-pass compile)
+$script:ZRxRcloneMount = [regex]::new('mount\s+(torbox|gdrive-media)') # Z085 precompiled rclone-mount regex (no per-pass compile)
+$script:ZRxHealthUrl = [regex]::new('^http://127\.0\.0\.1:\d+/(health|rc/noop|System/Info)') # Z086 precompiled health-URL regex (no per-pass compile)
+$script:ZRxPidFile = [regex]::new('^\d+$') # Z087 precompiled pid-file content regex (no per-pass compile)
+$script:ZStopwatch = [System.Diagnostics.Stopwatch]::StartNew() # Z088 monotonic stopwatch start (no wall-clock drift)
+function Get-ZElapsedMs { # Z089 monotonic elapsed-ms helper (Stopwatch, immune to clock steps)
+  try { return [long]$script:ZStopwatch.ElapsedMilliseconds } catch { return 0 }
+}
+$script:ZProbeStartMs = 0 # Z090 probe-start monotonic stamp (pairs with elapsed helper)
+$script:ZQuietStartHour = 1 # Z091 quiet-hour start hour (verbosity trim window)
+$script:ZQuietEndHour = 5 # Z092 quiet-hour end hour (verbosity trim window)
+function Test-ZQuietHour { # Z093 quiet-hour predicate helper (trims INFO verbosity overnight)
+  try {
+    $h = (Get-Date).Hour
+    return ($h -ge [int]$script:ZQuietStartHour -and $h -lt [int]$script:ZQuietEndHour)
+  } catch { return $false }
+}
+$script:ZHealthSummary = @{} # Z094 health-summary rollup table (one line per pass, not per service)
+function Write-ZHealthSummary { # Z095 health-summary rollup writer (single coalesced line per pass)
+  param([string]$Text)
+  try {
+    if (Test-ZQuietHour) { return }
+    $script:ZHealthSummary[(Get-Date -Format 'yyyy-MM-dd HH:mm')] = $Text
+    Write-ZLogBuffered -Message ("SUMMARY " + $Text) -Level 'INFO'
+  } catch { }
+}
+function Test-ZPortsBatch { # Z096 port-check batch helper (one index serves 8888/18099/18080/8096)
+  param([int[]]$Ports)
+  try {
+    $out = @{}
+    foreach ($p in $Ports) { $out[$p] = (Get-ZCachedNetstatPort -Port $p) }
+    return $out
+  } catch { return @{} }
+}
+function Test-ZFilesBatch { # Z097 file-exists batch helper (single pass over sentinel paths, memoized)
+  param([string[]]$Paths)
+  try {
+    $out = @{}
+    foreach ($p in $Paths) {
+      if ($script:ZFileCheckCache.ContainsKey($p)) { $out[$p] = [bool]$script:ZFileCheckCache[$p].Ok; continue }
+      $ok = Test-Path -LiteralPath $p
+      $script:ZFileCheckCache[$p] = @{ Stamp = (Get-Date); Ok = [bool]$ok }
+      $out[$p] = [bool]$ok
+    }
+    return $out
+  } catch { return @{} }
+}
+function Test-ZSentinelsBatch { # Z098 single-read sentinel batch helper (one pass, caches each result)
+  try {
+    $paths = @('F:\Media', 'T:\', 'F:\Jellyfin\server\jellyfin.exe', 'F:\Jellyfin\server\ffmpeg.exe')
+    return (Test-ZFilesBatch -Paths $paths)
+  } catch { return @{} }
+}
+function Test-ZProbeBudget { # Z099 probe-budget guard helper (stops new probes past ZProbeBudgetMs)
+  param([long]$StartMs)
+  try { return (((Get-ZElapsedMs) - [long]$StartMs) -lt [long]$script:ZProbeBudgetMs) } catch { return $true }
+}
+$script:ZPackVersion = '2026-09-06/zpack-100' # Z100 Z-pack version marker (audit tag for the 100-win section)
 
 # ---------------------------------------------------------------- dispatch
 try {

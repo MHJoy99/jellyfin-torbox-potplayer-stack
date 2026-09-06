@@ -1,0 +1,163 @@
+:root {
+  --a11y-focus: #9bc0ff;
+  --a11y-focus-ring: rgba(122, 168, 255, 0.4);
+  --a11y-bg: var(--bg, #070b12);
+  --a11y-text: var(--text, #e9eef7);
+}
+/* A11Y-071 screen-reader-only utility class */
+.a11y-sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+/* A11Y-072 offscreen skip links parked above viewport */
+.a11y-skip {
+  position: fixed; left: 12px; top: -80px; z-index: 300;
+  background: var(--a11y-bg); color: var(--a11y-text);
+  border: 1px solid var(--accent, #4f8cff); border-radius: 8px;
+  padding: 10px 14px; font-size: 13px; text-decoration: none;
+  transition: top 0.15s ease;
+}
+/* A11Y-073 skip links slide into view on keyboard focus */
+.a11y-skip.is-focused, .a11y-skip:focus, .a11y-skip:focus-visible { top: 12px; }
+/* A11Y-074 strong visible focus ring for keyboard users */
+body.a11y-kb :focus-visible {
+  outline: 3px solid var(--a11y-focus);
+  outline-offset: 2px; border-radius: 4px;
+}
+/* A11Y-075 fallback focus outline for all interactive elements */
+.a11y-skip:focus, button:focus-visible, a:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid var(--a11y-focus); outline-offset: 2px;
+}
+/* A11Y-076 never hide focus via outline none without replacement */
+button:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline-width: 0; }
+/* A11Y-077 keyboard modality backdrop for dialogs */
+body[data-a11y-focus-source="keyboard"] [role="dialog"] {
+  box-shadow: 0 0 0 3px var(--a11y-focus-ring), 0 18px 50px rgba(3, 7, 14, 0.6);
+}
+/* A11Y-078 minimum 44px touch targets for icon buttons */
+button.icon-btn, .a11y-icon-btn {
+  min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* A11Y-079 minimum 44px height for filter chips */
+#activity-chips button, .act-filter-chip, .ux-btn {
+  min-height: 44px; padding-top: 10px; padding-bottom: 10px;
+}
+/* A11Y-080 spacing between adjacent touch targets */
+.global-actions > * + *, #ux-toolbar > * + * { margin-left: 8px; }
+/* A11Y-081 larger hit area for small queue remove buttons */
+#offline-queue button, .ux-queue button {
+  min-height: 44px; min-width: 44px; padding: 10px 12px;
+}
+/* A11Y-082 respect OS reduced-motion setting globally */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* A11Y-083 freeze decorative orbs under reduced motion */
+body.a11y-reduced-motion .orb-a, body.a11y-reduced-motion .orb-b,
+body.a11y-reduced-motion .orb-c, body[data-a11y-motion="reduced"] .backdrop-decor * {
+  animation: none !important; transform: none !important;
+}
+/* A11Y-084 disable smooth scroll when motion reduced */
+body[data-a11y-motion="reduced"] { scroll-behavior: auto; }
+body[data-a11y-motion="reduced"] * { scroll-behavior: auto !important; }
+/* A11Y-085 high-contrast text bump via body class */
+body.a11y-high-contrast {
+  --text: #ffffff; --text-dim: #dbe5f5;
+  --muted: #c2cede; --faint: #a8b6cb;
+}
+/* A11Y-086 forced-colors mode adjustments for Windows HC */
+@media (forced-colors: active) {
+  button, a, input, select, textarea, [role="dialog"] { forced-color-adjust: auto; }
+  :focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+  .status-dot, .stack-chip-dot { forced-color-adjust: none; }
+}
+/* A11Y-087 forced-colors link legibility */
+@media (forced-colors: active) {
+  a { text-decoration: underline; }
+  button[disabled] { color: GrayText; border-color: GrayText; }
+}
+/* A11Y-088 dialog backdrop contrast veil */
+[id$="-overlay"] {
+  background: rgba(3, 7, 14, 0.72);
+}
+/* A11Y-089 dialog surface contrast floor */
+[role="dialog"] {
+  background: var(--bg-raised, #0b111c); color: var(--a11y-text);
+  border: 1px solid var(--line-strong, rgba(148, 170, 200, 0.26));
+}
+/* A11Y-090 live region positioning offscreen but available */
+#a11y-live-polite, #a11y-live-assertive, #a11y-alerts {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+/* A11Y-091 progressbar visible track for low vision */
+#top-progress[role="progressbar"] {
+  height: 4px; background: rgba(148, 170, 200, 0.2);
+}
+/* A11Y-092 progressbar fill contrast */
+#top-progress[role="progressbar"] > span {
+  background: var(--accent, #4f8cff); display: block; height: 100%;
+}
+/* A11Y-093 tooltip theme with readable contrast */
+.a11y-tip, [role="tooltip"] {
+  background: var(--surface-3, #182438); color: var(--a11y-text);
+  border: 1px solid var(--line-strong, rgba(148, 170, 200, 0.26));
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; max-width: 280px;
+}
+/* A11Y-094 tooltip hidden state stays hidden from AT */
+.a11y-tip[hidden], [role="tooltip"][hidden] { display: none !important; }
+/* A11Y-095 external-link indicator underline */
+a.a11y-ext { text-decoration: underline dotted; text-underline-offset: 3px; }
+/* A11Y-096 active filter chip current-state outline */
+#activity-chips button[aria-current="true"], .act-filter-chip[aria-current="true"] {
+  outline: 2px solid var(--a11y-focus); outline-offset: 1px; font-weight: 700;
+}
+/* A11Y-097 roving service card focus affordance */
+.service-card[tabindex="0"]:focus-visible {
+  outline: 3px solid var(--a11y-focus); outline-offset: 3px;
+}
+/* A11Y-098 disabled controls keep readable contrast */
+button[aria-disabled="true"], button:disabled {
+  opacity: 0.72; cursor: not-allowed;
+}
+/* A11Y-099 invalid input error outline */
+input[aria-invalid="true"] {
+  border-color: var(--red, #f06a6a);
+  box-shadow: 0 0 0 3px rgba(240, 106, 106, 0.3);
+}
+/* A11Y-100 required-field asterisk legibility */
+[aria-required="true"] + .a11y-req, .a11y-req {
+  color: var(--amber, #f0b35c); font-weight: 700;
+}
+/* A11Y-101 print stylesheet keeps text and links usable */
+@media print {
+  body { background: #fff; color: #000; }
+  .backdrop-decor, #top-progress, #ux-toolbar { display: none !important; }
+  a[href]::after { content: " (" attr(href) ")"; font-size: 10px; }
+  :focus-visible { outline: 2px solid #000; }
+}
+/* A11Y-102 print hides decorative dots and orbs */
+@media print {
+  .status-dot, .stack-chip-dot, .orb-a, .orb-b, .orb-c { display: none !important; }
+}
+/* A11Y-103 smaller-screen touch targets stay reachable */
+@media (max-width: 640px) {
+  .global-actions button, #ux-toolbar button { min-height: 44px; min-width: 44px; }
+}
+/* A11Y-104 caption styling hook stays visually hidden */
+table caption.a11y-sr-only {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; overflow: hidden; clip: rect(0 0 0 0);
+}
+/* A11Y-105 busy-state dimming keeps focus visible */
+[aria-busy="true"]:focus-within { outline: 2px dashed var(--a11y-focus); outline-offset: 4px; }

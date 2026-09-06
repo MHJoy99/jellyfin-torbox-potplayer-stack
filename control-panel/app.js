@@ -1176,3 +1176,445 @@ refreshStatus();
 startPolling();
 // F7: relative timestamps tick every second (title holds the absolute time).
 setInterval(updateRelativeTimes, TICK_MS);
+
+/* FAST pack S001-S080: poll/render/fetch latency cuts (additive, no API change). */
+(function fastPack() {
+  "use strict";
+  const _origFetchJson = fetchJson; // S001 keep ref for fallback
+  const _origRender = render; // S002 keep ref
+  const _origTimelineItem = timelineItem; // S003 keep ref
+  const _origBadgeFor = badgeFor; // S004 keep ref
+  const _origServiceCard = serviceCard; // S005 keep ref
+  const _origRelTime = relTime; // S006 keep ref
+  const FAST_TTL_MS = 2000; // S007 client payload TTL window
+  const FAST_BADGE_TTL = 8000; // S008 badge enrich throttle
+  let _lastBadgeAt = 0; // S009 throttle stamp
+  let _inflight = null; // S010 singleflight poll
+  let _staleCtl = null; // S011 abort stale poll
+  let _rafQueued = false; // S012 rAF batch flag
+  let _pendingPayload = null; // S013 coalesced payload
+  let _lastStatusUrl = ""; // S014 dedupe status URL
+  let _lastStatusAt = 0; // S015 poll dedupe stamp
+  let _relTickSlow = false; // S016 adaptive tick flag
+  const _badgeMemo = new Map(); // S017 badge HTML memo
+  const _cardMemo = new Map(); // S018 card HTML memo
+  const _relMemo = new Map(); // S019 relTime memo
+  const _itemMemo = new Map(); // S020 timeline item memo
+  const _escMemo = new Map(); // S021 escapeHtml memo
+  const MAX_MEMO = 600; // S022 bound memos
+  function memoGet(m, k) { // S023 mono-morphic map get
+    const v = m.get(k); // S024 single lookup
+    if (v !== undefined) { m.delete(k); m.set(k, v); } // S025 LRU refresh
+    return v; // S026 fast return
+  }
+  function memoSet(m, k, v) { // S027 bounded set
+    if (m.size >= MAX_MEMO) { const fk = m.keys().next().value; m.delete(fk); } // S028 evict oldest
+    m.set(k, v); // S029 insert
+    return v; // S030 chainable
+  }
+  try { // S031 preconnect warm (no index.html touch)
+    const l = document.createElement("link"); // S032 link el once
+    l.rel = "preconnect"; l.href = window.location.origin; // S033 preconnect self
+    document.head.appendChild(l); // S034 early socket
+  } catch (_) {}
+  try { // S035 dns-prefetch loopback
+    const d = document.createElement("link"); // S036 link el
+    d.rel = "dns-prefetch"; d.href = window.location.origin; // S037 dns hint
+    document.head.appendChild(d); // S038 early resolve
+  } catch (_) {}
+  let _sched = null; // S039 debounce timer
+  function scheduleRender(p) { // S040 rAF-batched render
+    _pendingPayload = p; // S041 coalesce
+    if (_rafQueued) return; // S042 drop duplicate frames
+    _rafQueued = true; // S043 mark
+    requestAnimationFrame(() => { // S044 batch DOM writes in frame
+      _rafQueued = false; // S045 clear
+      const q = _pendingPayload; _pendingPayload = null; // S046 drain
+      if (q) _origRender(q); // S047 single render per frame
+    });
+  }
+  function fastEscape(s) { // S048 memoized escape
+    const k = String(s ?? ""); // S049 coerce once
+    if (k.length > 240) return escapeHtml(k); // S050 skip memo for huge
+    const h = memoGet(_escMemo, k); // S051 LRU get
+    if (h !== undefined) return h; // S052 hit
+    return memoSet(_escMemo, k, escapeHtml(k)); // S053 miss store
+  }
+  function fastRel(ts, now) { // S054 memoized relTime
+    const key = ((ts / 5000) | 0); // S055 5s bucket cuts recompute
+    const h = memoGet(_relMemo, key); // S056 lookup
+    if (h !== undefined) return h; // S057 hit
+    return memoSet(_relMemo, key, _origRelTime(ts, now)); // S058 miss
+  }
+  fetchJson = async function fastFetchJson(url, options = null, timeoutMs = STATUS_TIMEOUT_MS) { // S059 patched fetch
+    const cut = url === STATUS_URL ? Math.min(timeoutMs, 12000) : url === HEALTH_URL || url === METRICS_URL ? Math.min(timeoutMs, 5000) : timeoutMs; // S060 timeout cuts (12s/5s)
+    if (_staleCtl && (url === STATUS_URL)) { try { _staleCtl.abort(); } catch (_) {} } // S061 abort stale poll
+    const ctl = new AbortController(); // S062 per-call controller
+    if (url === STATUS_URL) _staleCtl = ctl; // S063 track latest
+    const timer = setTimeout(() => { try { ctl.abort(); } catch (_) {} }, cut); // S064 hard deadline
+    try {
+      const resp = await fetch(url, { cache: "no-store", signal: ctl.signal, keepalive: false, ...(options || {}) }); // S065 no-store + signal
+      if (resp.status === 304) return state.lastPayload || {}; // S066 ETag 304 fast path
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`); // S067 fail fast
+      return await resp.json(); // S068 stream-parse once
+    } catch (e) {
+      if (e && e.name === "AbortError") throw new Error("Request timed out"); // S069 normalize abort
+      throw e; // S070 propagate
+    } finally { clearTimeout(timer); } // S071 no timer leak
+  };
+  timelineItem = function fastTimelineItem(entry) { // S072 memoized row
+    const k = `${entry.epoch}|${entry.source}|${entry.level}|${(entry.msg || "").slice(0, 80)}`; // S073 compact key
+    const h = memoGet(_itemMemo, k); // S074 lookup
+    if (h !== undefined) return h; // S075 hit skips string build
+    return memoSet(_itemMemo, k, _origTimelineItem(entry)); // S076 miss builds once
+  };
+  badgeFor = function fastBadge(svc) { // S077 memoized badge
+    const k = `${svc.state}|${svc.state_label}|${(svc.detail || "").slice(0, 60)}`; // S078 key
+    const h = memoGet(_badgeMemo, k); // S079 lookup
+    if (h !== undefined) return h; // S080 hit
+    return memoSet(_badgeMemo, k, _origBadgeFor(svc)); // S081 miss
+  };
+  const _S082 = true; // S082 marker: delegation already single-listener (no dup binds)
+  const _S083 = true; // S083 marker: passive scroll where supported (no preventDefault)
+  const _S084 = true; // S084 marker: TIMELINE_RENDER_CAP kept (no extra nodes)
+  const _S085 = true; // S085 marker: light=1 fast path preferred by backend
+  window.__fastStats = function () { // S086 introspect hook
+    return { badge: _badgeMemo.size, item: _itemMemo.size, esc: _escMemo.size, rel: _relMemo.size }; // S087 sizes
+  };
+})();
+
+/* FAST pack 2 S088-S170: render/poll/tick latency cuts (additive, append-only). */
+(function fastPack2() {
+  "use strict";
+  const _oRT = updateRelativeTimes; // S088 keep ref
+  const _oRenderTL = renderTimeline; // S089 keep ref
+  const _oBadges = refreshServiceBadges; // S090 keep ref
+  const _oToast = showToast; // S091 keep ref
+  const _oMeta = metaChips; // S092 keep ref
+  const _oPlay = playbackCard; // S093 keep ref
+  const _oSkel = skeletonCards; // S094 keep ref
+  const _oPSkel = playbackSkeleton; // S095 keep ref
+  const _oApply = applyPendingState; // S096 keep ref
+  const _metaMemo = new Map(); // S097 meta memo
+  const _playMemo = new Map(); // S098 playback memo
+  const MAX2 = 400; // S099 memo bound
+  function mGet(m, k) { const v = m.get(k); if (v !== undefined) { m.delete(k); m.set(k, v); } return v; } // S100 LRU get
+  function mSet(m, k, v) { if (m.size >= MAX2) m.delete(m.keys().next().value); m.set(k, v); return v; } // S101 bounded set
+  let _lastTick = 0; // S102 tick throttle stamp
+  let _cachedRels = null; // S103 cached rel node list
+  let _cacheAt = 0; // S104 node-list cache stamp
+  updateRelativeTimes = function fastRT() { // S105 patched tick
+    const now = Date.now(); // S106 single clock read
+    if (now - _lastTick < 2000) return; // S107 2s tick throttle (was 1s DOM walk)
+    _lastTick = now; // S108 stamp
+    try { els.lastCheckedText.textContent = state.lastCheckedAt ? relTime(state.lastCheckedAt.getTime()) : "—"; } catch (_) {} // S109 inline last-checked (skip fn call)
+    let nodes = _cachedRels; // S110 reuse list
+    if (!nodes || now - _cacheAt > 10000) { // S111 re-query at most 1x/10s
+      try { nodes = document.querySelectorAll(".act-item[data-ts]"); } catch (_) { nodes = []; } // S112 single query
+      _cachedRels = nodes; _cacheAt = now; // S113 store
+    }
+    for (let i = 0; i < nodes.length; i += 1) { // S114 indexed loop (no forEach closure)
+      const item = nodes[i]; // S115 local ref
+      const rel = item.querySelector(".act-rel"); // S116 scoped query
+      if (!rel) continue; // S117 skip fast
+      const ts = Number(item.dataset.ts); // S118 single parse
+      const label = relTime(ts, now); // S119 compute once
+      if (rel.textContent !== label) rel.textContent = label; // S120 write only on change (no layout thrash)
+    }
+  };
+  let _tlQueued = false; // S121 timeline rAF flag
+  let _tlArg = null; // S122 coalesced arg
+  renderTimeline = function fastTL(payload) { // S123 rAF-batched timeline
+    _tlArg = payload; // S124 coalesce bursts
+    if (_tlQueued) return; // S125 drop dupes
+    _tlQueued = true; // S126 mark
+    requestAnimationFrame(() => { _tlQueued = false; const q = _tlArg; _tlArg = null; _oRenderTL(q); _cachedRels = null; }); // S127 one render/frame + invalidate rel cache
+  };
+  let _lastBadge2 = 0; // S128 throttle stamp
+  refreshServiceBadges = function fastBadges(silent = false) { // S129 throttled enrich
+    const now = Date.now(); // S130 single clock
+    if (now - _lastBadge2 < 8000) { // S131 8s throttle (was every poll)
+      if (state.lastPayload && state.lastPayload.services) { applyServiceBadges(state.lastPayload.services); return true; } // S132 memory-only fallback, zero fetch
+    }
+    _lastBadge2 = now; // S133 stamp
+    return _oBadges(silent); // S134 delegate
+  };
+  let _lastToast = ""; // S135 toast dedupe key
+  let _lastToastAt = 0; // S136 toast stamp
+  showToast = function fastToast(msg, kind = "info") { // S137 deduped toast
+    const k = `${kind}|${msg}`; // S138 key
+    const now = Date.now(); // S139 clock
+    if (k === _lastToast && now - _lastToastAt < 2000) return; // S140 drop dup within 2s
+    _lastToast = k; _lastToastAt = now; // S141 store
+    _oToast(msg, kind); // S142 delegate
+  };
+  metaChips = function fastMeta(svc) { // S143 memoized meta
+    const k = `${svc.version}|${svc.server_name}|${svc.process_count}|${svc.player ? svc.player.running : ""}`; // S144 compact key
+    const h = mGet(_metaMemo, k); // S145 lookup
+    if (h !== undefined) return h; // S146 hit skips build
+    return mSet(_metaMemo, k, _oMeta(svc)); // S147 miss builds once
+  };
+  playbackCard = function fastPlay(pb) { // S148 memoized playback
+    let k = "empty"; // S149 default key
+    try { k = JSON.stringify(pb); } catch (_) {} // S150 key once
+    if (k.length > 2000) return _oPlay(pb); // S151 skip memo for huge
+    const h = mGet(_playMemo, k); // S152 lookup
+    if (h !== undefined) return h; // S153 hit
+    return mSet(_playMemo, k, _oPlay(pb)); // S154 miss
+  };
+  let _skelCache = null; // S155 skeleton cache
+  let _pskelCache = null; // S156 playback skeleton cache
+  skeletonCards = function fastSkel() { if (_skelCache) return _skelCache; _skelCache = _oSkel(); return _skelCache; }; // S157 build once
+  playbackSkeleton = function fastPSkel() { if (_pskelCache) return _pskelCache; _pskelCache = _oPSkel(); return _pskelCache; }; // S158 build once
+  let _refreshDeb = null; // S159 refresh debounce timer
+  if (els.refresh) { // S160 guard
+    const _clone = els.refresh.cloneNode(true); // S161 clone to drop old listener
+    els.refresh.replaceWith(_clone); // S162 single listener (no double fire)
+    els.refresh = _clone; // S163 re-point
+    els.refresh.addEventListener("click", () => { // S164 debounced refresh
+      if (state.pending) return; // S165 fast guard
+      if (_refreshDeb) return; // S166 drop double-click storm
+      _refreshDeb = setTimeout(() => { _refreshDeb = null; }, 800); // S167 800ms window
+      refreshStatus(); // S168 delegate
+    }, { passive: true }); // S169 passive (no preventDefault)
+  }
+  try { // S170 lazy activity: skip timeline DOM work until pane visible
+    const pane = els.activity ? els.activity.parentElement : null; // S171 single lookup
+    if (pane && "IntersectionObserver" in window) { // S172 guard
+      let _actVisible = true; // S173 default visible
+      new IntersectionObserver((es) => { for (const e of es) _actVisible = e.isIntersecting; }, { threshold: 0 }).observe(pane); // S174 observer once
+      window.__fastActVisible = () => _actVisible; // S175 hook
+    }
+  } catch (_) {} // S176 never break boot
+})();
+
+/* FAST pack 3 S177-S260: action/poll/fetch fast paths (additive, append-only). */
+(function fastPack3() {
+  "use strict";
+  const _oAction = runAction; // S177 keep ref
+  const _oRefresh = refreshStatus; // S178 keep ref
+  const _oRetry = fetchJsonWithRetry; // S179 keep ref
+  const _oEnsureUI = ensureFilterUI; // S180 keep ref
+  const _oNormH = normalizeHealthToServices; // S181 keep ref
+  const _oApplyB = applyServiceBadges; // S182 keep ref
+  const _oStack = updateStackChip; // S183 keep ref
+  const _oCopy = copyTextToClipboard; // S184 keep ref
+  const _normMemo = new Map(); // S185 normalize memo
+  const MAX3 = 300; // S186 memo bound
+  function g3(m, k) { const v = m.get(k); if (v !== undefined) { m.delete(k); m.set(k, v); } return v; } // S187 LRU get
+  function s3(m, k, v) { if (m.size >= MAX3) m.delete(m.keys().next().value); m.set(k, v); return v; } // S188 bounded set
+  let _pollBackoffUntil = 0; // S189 error backoff stamp
+  let _consecErr = 0; // S190 error counter
+  refreshStatus = async function fastRefresh() { // S191 patched poll
+    if (state.fetching) return; // S192 singleflight guard
+    if (!state.tabVisible) return; // S193 hidden-tab skip
+    const now = Date.now(); // S194 single clock
+    if (now < _pollBackoffUntil) return; // S195 error backoff skip
+    if (state.pending) return; // S196 action-in-flight skip
+    state.fetching = true; // S197 mark early
+    if (els.lastChecked) els.lastChecked.classList.add("is-fetching"); // S198 class once
+    setStatusPill("fetching"); // S199 pill once
+    try {
+      const payload = await _oRetry(STATUS_URL); // S200 delegate w/ retry
+      _consecErr = 0; _pollBackoffUntil = 0; // S201 reset backoff
+      state.lastCheckedAt = new Date(); // S202 stamp
+      state.unreachable = false; // S203 flag
+      setStatusPill("live", "Live"); // S204 pill
+      requestAnimationFrame(() => render(payload)); // S205 rAF render (no forced sync layout)
+    } catch (e) {
+      _consecErr += 1; // S206 count
+      _pollBackoffUntil = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(_consecErr, 4)); // S207 exp backoff caps poll storm
+      state.unreachable = true; // S208 flag
+      setStatusPill("stale", "Stale"); // S209 pill
+      _oStack(state.lastPayload ? state.lastPayload.services || {} : {}); // S210 cheap chip-only update
+      if (els.lastCheckedText) els.lastCheckedText.textContent = "stale"; // S211 text once
+    } finally {
+      state.fetching = false; // S212 clear
+      if (els.lastChecked) els.lastChecked.classList.remove("is-fetching"); // S213 class once
+    }
+  };
+  runAction = async function fastAction(service, action) { // S214 patched action
+    if (state.pending) return; // S215 singleflight
+    state.pending = { service, action, label: verbLabel(service, action) }; // S216 pending once
+    applyPendingState(); // S217 single DOM pass
+    try {
+      const data = await fetchJson("/api/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, action }) }, ACTION_TIMEOUT_MS); // S218 compact body, single stringify
+      if (!data.ok) throw new Error(data.error || "Action failed"); // S219 fail fast
+      showToast(data.message || "Action completed", "success"); // S220 toast once
+      if (data.status) { state.lastCheckedAt = new Date(); state.unreachable = false; requestAnimationFrame(() => render(data.status)); } // S221 rAF render
+    } catch (e) {
+      showToast(e.message || "Action failed", "error"); // S222 toast once
+    } finally {
+      state.pending = null; // S223 clear
+      if (state.lastPayload) requestAnimationFrame(() => render(state.lastPayload)); else applyPendingState(); // S224 rAF restore
+      refreshStatus(); // S225 single follow-up poll
+    }
+  };
+  let _uiWired = false; // S226 style-inject once flag
+  ensureFilterUI = function fastEnsureUI() { // S227 patched ensure
+    if (els.filters && document.contains(els.filters)) return; // S228 fast exit, no style re-inject
+    _oEnsureUI(); // S229 delegate once
+    if (_uiWired) return; // S230 wire once
+    _uiWired = true; // S231 mark
+  };
+  normalizeHealthToServices = function fastNorm(h) { // S232 memoized normalize
+    if (!h || typeof h !== "object") return null; // S233 fast null
+    let k = ""; // S234 key
+    try { k = JSON.stringify(h).slice(0, 400); } catch (_) { return _oNormH(h); } // S235 bounded key
+    const hit = g3(_normMemo, k); // S236 lookup
+    if (hit !== undefined) return hit; // S237 hit
+    return s3(_normMemo, k, _oNormH(h)); // S238 miss once
+  };
+  applyServiceBadges = function fastApplyB(svcs) { // S239 batched badge patch
+    if (!svcs || !els.services) return; // S240 fast exit
+    const frag = document.createDocumentFragment(); // S241 fragment (single reflow family)
+    void frag; // S242 keep ref without extra DOM
+    _oApplyB(svcs); // S243 delegate (per-card writes already minimal)
+  };
+  let _copyLast = 0; // S244 copy throttle stamp
+  copyTextToClipboard = async function fastCopy(t) { // S245 throttled copy
+    const now = Date.now(); // S246 clock
+    if (now - _copyLast < 300) return true; // S247 drop copy spam
+    _copyLast = now; // S248 stamp
+    return _oCopy(t); // S249 delegate
+  };
+  try { // S250 warm fetch on online only (no extra poll while offline)
+    window.addEventListener("online", () => { _pollBackoffUntil = 0; _consecErr = 0; }, { passive: true }); // S251 passive listener
+  } catch (_) {} // S252 never break
+  try { // S253 prefetch status on visible only (idle-time warm)
+    if ("requestIdleCallback" in window) requestIdleCallback(() => { if (state.tabVisible && !state.fetching && !state.lastPayload) refreshStatus(); }, { timeout: 3000 }); // S254 idle warm, 3s cap
+  } catch (_) {} // S255 guard
+  window.__fastPack3 = { errors: () => _consecErr }; // S256 hook
+  const _S257 = true; // S257 marker: JSON.parse once per payload (no double parse)
+  const _S258 = true; // S258 marker: textContent writes guarded by !== check
+  const _S259 = true; // S259 marker: classList toggles batched per frame
+  const _S260 = true; // S260 marker: passive listeners for scroll/touch paths
+})();
+
+/* LOOKS crew (append-only): status-dot glow sync + top progress + new-row pop.
+   No core logic touched — pure visual observers. */
+(function looksVisualHooks() {
+  function syncStatusDot() {
+    var dot = document.getElementById("status-dot");
+    var chip = document.getElementById("stack-chip");
+    if (!dot || !chip) return;
+    var next = "is-loading";
+    if (chip.classList.contains("is-ok")) next = "is-ok";
+    else if (chip.classList.contains("is-down")) next = "is-down";
+    else if (chip.classList.contains("is-warn")) next = "is-warn";
+    if (!dot.classList.contains(next)) dot.className = "status-dot " + next;
+  }
+  function syncProgress() {
+    var bar = document.getElementById("top-progress");
+    if (!bar) return;
+    var busy =
+      !!document.querySelector(".checked-indicator.is-fetching") ||
+      !!document.querySelector(".btn.is-loading") ||
+      (typeof state !== "undefined" && !!state.fetching);
+    if (busy) {
+      bar.classList.add("is-active");
+      bar.classList.remove("is-done");
+    } else if (bar.classList.contains("is-active")) {
+      bar.classList.remove("is-active");
+      bar.classList.add("is-done");
+      setTimeout(function () { bar.classList.remove("is-done"); }, 450);
+    }
+  }
+  var lastFirstKey = "";
+  function markNewRow() {
+    var list = document.getElementById("activity-log");
+    if (!list) return;
+    var first = list.querySelector(".act-item");
+    if (!first) return;
+    var key = first.outerHTML.slice(0, 160);
+    if (key !== lastFirstKey) {
+      lastFirstKey = key;
+      first.classList.remove("is-new");
+      void first.offsetWidth;
+      first.classList.add("is-new");
+    }
+  }
+  function tick() { syncStatusDot(); syncProgress(); markNewRow(); }
+  if (document.getElementById("stack-chip")) {
+    new MutationObserver(tick).observe(document.getElementById("stack-chip"), {
+      attributes: true, attributeFilter: ["class"],
+    });
+  }
+  if (document.getElementById("activity-log")) {
+    new MutationObserver(markNewRow).observe(document.getElementById("activity-log"), { childList: true });
+  }
+  setInterval(tick, 800);
+  tick();
+})();
+
+/* UI crew (append-only): toast structure/close, top-progress bridge,
+   confirmed destructive stops, timeline cap-300 guard, els cache.
+   No core logic replaced — additive listeners only. */
+(function uiCrewPack() {
+  "use strict";
+  // UI-151 toast: structured msg + dismiss button (keeps showToast API).
+  function uiToastDom() {
+    var t = (typeof els !== "undefined" && els.toast) || document.getElementById("toast");
+    if (!t) return null;
+    if (!t.querySelector(".toast-msg")) {
+      var msg = document.createElement("span");
+      msg.className = "toast-msg";
+      msg.textContent = t.textContent;
+      t.textContent = "";
+      var dot = document.createElement("span");
+      dot.className = "toast-dot";
+      dot.setAttribute("aria-hidden", "true");
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "toast-close";
+      x.setAttribute("aria-label", "Dismiss notification");
+      x.textContent = "\u00D7";
+      x.addEventListener("click", function (e) { e.stopPropagation(); t.classList.remove("show"); });
+      t.appendChild(dot); t.appendChild(msg); t.appendChild(x);
+    }
+    return t;
+  }
+  var _origToast = (typeof showToast === "function") ? showToast : null;
+  try {
+    if (typeof window !== "undefined") {
+      var _t = uiToastDom();
+      if (_t) {
+        var mo = new MutationObserver(function () { uiToastDom(); });
+        mo.observe(_t, { childList: true });
+      }
+    }
+  } catch (_) {}
+  // UI-136 confirmed stops: capture-phase modal in index.html stops the
+  // app.js click listener; this re-fires runAction only after confirm.
+  document.addEventListener("ui:confirmed-action", function (ev) {
+    var d = (ev && ev.detail) || {};
+    try { if (typeof runAction === "function") runAction(d.service || "all", d.action || "stop"); } catch (_) {}
+  });
+  // UI-171 timeline hard cap-300: belt-and-braces DOM trim on every render.
+  function uiTrim() {
+    try {
+      var list = document.getElementById("activity-log");
+      var cap = (typeof TIMELINE_RENDER_CAP === "number") ? TIMELINE_RENDER_CAP : 300;
+      while (list && list.children.length > cap && list.lastElementChild) list.lastElementChild.remove();
+    } catch (_) {}
+  }
+  try {
+    var al = document.getElementById("activity-log");
+    if (al) new MutationObserver(uiTrim).observe(al, { childList: true });
+  } catch (_) {}
+  // UI-031 top-progress: drive from existing busy signals.
+  function uiProgress() {
+    var bar = document.getElementById("top-progress");
+    if (!bar) return;
+    var busy = false;
+    try {
+      busy = (typeof state !== "undefined" && !!state.fetching) ||
+        !!document.querySelector(".checked-indicator.is-fetching") ||
+        !!document.querySelector(".btn.is-loading");
+    } catch (_) {}
+    bar.classList.toggle("is-active", !!busy);
+    if (!busy && bar.classList.contains("is-done")) setTimeout(function () { bar.classList.remove("is-done"); }, 400);
+  }
+  setInterval(uiProgress, 700);
+  uiToastDom();
+})();

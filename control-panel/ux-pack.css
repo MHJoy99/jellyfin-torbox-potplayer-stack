@@ -1,0 +1,59 @@
+/* UX pack: standalone additions, no changes to app.css conventions. */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}
+.skip-link{position:fixed;left:12px;top:-60px;z-index:200;background:#13233d;color:#e9eef7;border:1px solid #4f8cff;border-radius:8px;padding:8px 12px;font-size:13px;transition:top .15s ease;text-decoration:none;}
+.skip-link:focus-visible{top:12px;}
+.offline-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#2a1518;border-bottom:1px solid rgba(240,106,106,.4);color:#ffd9d9;padding:8px 16px;font-size:12.5px;}
+.offline-banner[hidden]{display:none;}
+.offline-dot{width:9px;height:9px;border-radius:50%;background:#f06a6a;box-shadow:0 0 0 4px rgba(240,106,106,.18);flex:0 0 auto;}
+.offline-count{font-variant-numeric:tabular-nums;color:#ffb4b4;border:1px solid rgba(240,106,106,.4);border-radius:999px;padding:1px 9px;font-size:11.5px;}
+.queued-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#141d30;border-bottom:1px solid #2a3a55;color:#cfe1ff;padding:8px 16px;font-size:12.5px;}
+.queued-bar[hidden]{display:none;}
+.ux-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;max-width:1320px;margin:0 auto;padding:10px 22px 0;}
+.ux-toolbar .spacer{flex:1 1 auto;}
+.ux-search{display:inline-flex;align-items:center;gap:6px;background:#131e30;border:1px solid #2a3a55;border-radius:9px;padding:5px 9px;min-width:min(280px,100%);}
+.ux-search input{background:transparent;border:0;color:inherit;font:inherit;width:170px;outline:none;}
+.ux-search input::placeholder{color:#5c6a80;}
+.ux-result-count{font-size:11.5px;color:#7d8ca3;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.ux-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid #2a3a55;background:#131e30;color:#a7b4c8;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.ux-btn:hover{color:#fff;border-color:#4f8cff;}
+.ux-btn[aria-pressed="true"]{background:rgba(79,140,255,.14);border-color:#4f8cff;color:#cfe1ff;}
+.ux-btn:disabled{opacity:.45;cursor:not-allowed;}
+kbd.kbd{font-family:monospace;font-size:10.5px;border:1px solid #2a3a55;border-bottom-width:2px;border-radius:5px;padding:0 5px;color:#a7b4c8;background:rgba(148,170,200,.07);}
+.ux-overlay{position:fixed;inset:0;z-index:150;display:flex;align-items:flex-start;justify-content:center;padding:8vh 16px 16px;background:rgba(3,7,14,.66);backdrop-filter:blur(3px);}
+.ux-overlay[hidden]{display:none;}
+.ux-dialog{width:min(620px,100%);background:#0b111c;border:1px solid #2a3a55;border-radius:14px;box-shadow:0 18px 50px rgba(3,7,14,.6);overflow:hidden;}
+.ux-dialog-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #1c2940;}
+.ux-dialog-head h2{font-size:14px;margin:0;}
+.ux-dialog-head .sub{font-size:11.5px;color:#7d8ca3;}
+.ux-dialog-body{padding:12px 14px;max-height:min(60vh,520px);overflow:auto;}
+.ux-dialog-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid #1c2940;font-size:11.5px;color:#7d8ca3;}
+.ux-palette-input{width:100%;background:#131e30;border:1px solid #2a3a55;border-radius:9px;color:inherit;font:inherit;padding:9px 11px;outline:none;}
+.ux-palette-input:focus{border-color:#4f8cff;box-shadow:0 0 0 3px rgba(79,140,255,.22);}
+.ux-palette-group{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#5c6a80;margin:12px 2px 6px;font-weight:700;}
+.ux-palette-list{list-style:none;margin:0;padding:0;display:grid;gap:4px;}
+.ux-palette-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:9px;padding:8px 10px;cursor:pointer;color:inherit;font:inherit;}
+.ux-palette-item small{color:#7d8ca3;margin-left:auto;font-size:11px;}
+.ux-palette-item.is-active{background:rgba(79,140,255,.14);border-color:#4f8cff;}
+.ux-keys-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.ux-keys-table th,.ux-keys-table td{text-align:left;padding:7px 8px;border-bottom:1px solid #1c2940;vertical-align:top;}
+.ux-keys-table th{color:#7d8ca3;font-weight:600;font-size:11.5px;}
+.ux-empty{border:1px dashed #2a3a55;border-radius:10px;padding:14px;text-align:center;color:#7d8ca3;font-size:12.5px;}
+.ux-empty strong{display:block;color:#e9eef7;margin-bottom:4px;}
+.ux-empty .row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}
+.ux-steps{display:flex;gap:6px;align-items:center;margin:10px 0;}
+.ux-step{height:6px;flex:1;border-radius:999px;background:#182438;}
+.ux-step.is-on{background:#4f8cff;}
+.toast.has-action{pointer-events:auto;}
+.toast .toast-action{background:rgba(79,140,255,.14);border:1px solid #4f8cff;color:#cfe1ff;border-radius:7px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;}
+.ux-inline-help{font-size:11.5px;color:#5c6a80;}
+.ux-bulkbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:9px 11px;border:1px solid #1c2940;border-radius:10px;background:rgba(148,170,200,.05);font-size:12px;color:#7d8ca3;}
+.top-progress[role="progressbar"]{position:fixed;top:0;left:0;right:0;height:2px;z-index:160;pointer-events:none;}
+html[data-density="compact"] body{font-size:13px;}
+html[data-density="compact"] .service-card{padding:12px;}
+html[data-density="compact"] .act-item{padding-bottom:8px;}
+html[data-contrast="high"]{--text:#ffffff;--text-dim:#d7e1f2;--muted:#b9c6da;--faint:#93a2b8;}
+html[data-contrast="high"] .service-card,html[data-contrast="high"] .activity-pane,html[data-contrast="high"] .playback-card{border-color:#7aa8ff;}
+html[data-motion="reduced"] *,html[data-motion="reduced"] *::before,html[data-motion="reduced"] *::after{animation-duration:.01ms !important;transition-duration:.01ms !important;}
+:focus-visible{outline:2px solid #9bc0ff;outline-offset:2px;}
+@media (max-width:720px){.ux-toolbar{padding:10px 16px 0;}.ux-search{width:100%;}.ux-search input{flex:1;width:auto;}}
+@media print{.ux-toolbar,.offline-banner,.queued-bar,.ux-overlay,#toast{display:none !important;}}
