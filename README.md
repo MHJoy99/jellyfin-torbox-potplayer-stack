@@ -46,11 +46,27 @@ pwsh -File install.ps1 -WhatIf
 pwsh -File install.ps1
 ```
 
-`install.ps1` prompts for `TORBOX_API_KEY` (masked), validates it once, installs to `F:\Jellyfin`, registers `potplayer://`, creates the supervisor task, starts the stack, and health-checks `:8888` / `:18099` / `:18080` / `:8096`. Options (`-SkipTasks`, `-Portable`, `-Uninstall`) and receipts are in `docs/install.md`.
+`install.ps1` prompts for `TORBOX_API_KEY` (masked), validates it with a live API call, initializes the `F:\Jellyfin` directory layout, registers the `potplayer://` protocol handler, registers the supervisor scheduled task (`MediaStackSupervisor`), starts the stack, and runs port health probes (`:8888`, `:18099`, `:18080`, `:8096`). All switches (`-WhatIf`, `-Uninstall`, `-SkipTasks`, `-Portable`, `-TorboxApiKey`, `-KeyScope`) and receipts are detailed in `docs/install.md`.
 
-**B — Guided:** `pwsh -File setup-wizard.ps1` for step-by-step key, library, Jellyfin, PotPlayer, rclone, and port checks with a dry-run before anything changes.
+**B — Guided interactive wizard:**
 
-**C — Manual (advanced):** `pwsh -File install-all.ps1` runs the six installers in dependency order, then `pwsh -File supervisor.ps1 -Mode Start` does one ordered start (mounts → proxy → bridge → Jellyfin → panel). Full order and verify steps are in `docs/install.md` and `docs/quickstart.md`.
+```powershell
+pwsh -File setup-wizard.ps1
+```
+
+`setup-wizard.ps1` guides you step-by-step through masked key entry, library root folders, Jellyfin connection test, PotPlayer auto-detection, rclone configuration, port availability, and playback mode, showing a dry-run preview before applying changes. Supports `-Resume` and `-NonInteractive`.
+
+**C — Manual component install (advanced):**
+
+```powershell
+# Run component installers in dependency order:
+pwsh -File install-all.ps1
+
+# Perform one-time ordered service startup (mounts -> proxy -> bridge -> Jellyfin -> panel):
+pwsh -File supervisor.ps1 -Mode Start
+```
+
+Full dependency order and verification steps live in `docs/install.md` and `docs/quickstart.md`.
 
 Then open the panel:
 
