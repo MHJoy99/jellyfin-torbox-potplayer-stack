@@ -1,0 +1,28 @@
+# jellyfin-torbox-potplayer-stack
+
+> A Windows 10/11 home-theater stack (MIT) that mounts TorBox cloud torrents as local drives with rclone, keeps the library, metadata, resume and Next-Up in Jellyfin 10.x, and direct-streams 4K in PotPlayer through a local proxy, with no transcoding. It adds a 5-second resume sync back to Jellyfin, a watch console, a supervisor watchdog and a loopback-only web control panel. Install: clone the repo and run `pwsh -File install.ps1`.
+
+Scope: Windows 10/11 x64, PowerShell 7+, Python 3.11, Jellyfin 10.x, PotPlayer x64, rclone VFS with WinFsp, a TorBox account. Not in scope: Linux, macOS, Docker, Plex, Emby, remote hosting. Use responsibly: play only media you own or have the right to access, and respect the terms of the services you use.
+
+## Docs
+
+- [README](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack#readme): quickstart, features, architecture, ports, configuration, FAQ
+- [Documentation index](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/index.md): install, quickstart, TorBox, Jellyfin, PotPlayer, panel, supervisor, FAQ, troubleshooting
+- [ARCHITECTURE.md](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/ARCHITECTURE.md): service map, data flow, session model, boot order
+- [FEATURES.md](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/FEATURES.md): feature overview
+- [COMPARISON.md](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/COMPARISON.md): comparison with Plex, Emby, plain Jellyfin and Infuse
+- [RUNBOOK.md](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/RUNBOOK.md): day-2 operations, restart order, key rotation
+- [ROADMAP.md](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/ROADMAP.md): landed and planned work
+- [Full plain-text description for LLMs](https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/llms-full.txt): everything on this site in one file
+
+## Project
+
+- [Project website](https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/)
+- [Source code on GitHub](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack)
+- [Issues](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/issues)
+- [License (MIT)](https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/LICENSE)
+
+## Optional
+
+- [Author profile: MHJoy99](https://github.com/MHJoy99)
+- [CCUsageX](https://mhjoy99.github.io/CCUsageX/): Claude Code usage dashboard by the same author

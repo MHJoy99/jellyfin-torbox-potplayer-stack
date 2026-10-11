@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Jellyfin + TorBox + PotPlayer Stack for Windows</title>
+<meta name="description" content="Windows home-theater stack: TorBox mounted via rclone, Jellyfin library, PotPlayer direct-streams 4K with resume sync and a control panel. MIT.">
+<link rel="canonical" href="https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="author" content="MHJoy99">
+<meta name="keywords" content="Jellyfin TorBox PotPlayer, Jellyfin PotPlayer resume sync, TorBox rclone mount Windows, direct-stream 4K Windows, Jellyfin external player, no transcoding">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#fbf9ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#07050c" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="jellyfin-torbox-potplayer-stack">
+<meta property="og:title" content="Jellyfin + TorBox + PotPlayer Stack for Windows">
+<meta property="og:description" content="Windows home-theater stack: TorBox mounted via rclone, Jellyfin library, PotPlayer direct-streams 4K with resume sync and a control panel. MIT.">
+<meta property="og:url" content="https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/">
+<meta property="og:image" content="https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A 4K title streaming from TorBox through a local proxy into PotPlayer, with resume sync back to Jellyfin">
+<meta property="og:locale" content="en_US">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Jellyfin + TorBox + PotPlayer Stack for Windows">
+<meta name="twitter:description" content="Windows home-theater stack: TorBox mounted via rclone, Jellyfin library, PotPlayer direct-streams 4K with resume sync and a control panel. MIT.">
+<meta name="twitter:image" content="https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/og-image.png">
+<meta name="twitter:image:alt" content="A 4K title streaming from TorBox through a local proxy into PotPlayer, with resume sync back to Jellyfin">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "@id": "https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/#app",
+  "name": "jellyfin-torbox-potplayer-stack",
+  "alternateName": "Jellyfin + TorBox + PotPlayer Stack for Windows",
+  "url": "https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/",
+  "description": "Windows home-theater stack that mounts TorBox cloud torrents as local drives with rclone, keeps the library in Jellyfin, and direct-streams 4K in PotPlayer through a local proxy with resume sync, a supervisor and a loopback-only control panel. No transcoding.",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareRequirements": "PowerShell 7+, Python 3.11, Jellyfin Server 10.x, PotPlayer x64, rclone with WinFsp, TorBox account",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "codeRepository": "https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack",
+  "downloadUrl": "https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack",
+  "installUrl": "https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack#-30-second-quickstart",
+  "image": "https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/og-image.png",
+  "featureList": [
+    "TorBox proxy with never-expiring local URLs and fresh CDN links",
+    "One-click Play-in-PotPlayer via potplayer:// links with full-season playlists",
+    "Resume sync: progress posted to Jellyfin every 5 seconds, Played at 80%",
+    "Live watch console for playback ticks",
+    "Loopback-only web control panel",
+    "Supervisor with ordered start and watchdog"
+  ],
+  "author": {
+    "@type": "Person",
+    "name": "MHJoy99",
+    "url": "https://github.com/MHJoy99"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "@id": "https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/#faq",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What does this stack do that plain Jellyfin cannot do on Windows?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "It mounts TorBox and Google Drive as local drives with rclone, serves fresh CDN URLs through a local proxy on port 8888, and launches PotPlayer with a full-season playlist at your exact resume point. Jellyfin keeps the library, metadata and watched state, while PotPlayer handles 4K direct-stream playback without transcoding or browser codec limits."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Where do I store my TorBox API key so it never leaks to GitHub?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Store it only as a Windows environment variable named TORBOX_API_KEY at User or Machine scope, then restart the proxy and supervisor so child processes inherit it. Never paste the key into scripts, configs, issues or commits. The proxy refuses to start when the variable is empty, and rotation means updating the environment plus registry and restarting the services."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Why does PotPlayer start instantly while Jellyfin Web sometimes buffers on the same file?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Jellyfin Web often remuxes or transcodes high-bitrate 4K REMUX files because of browser codec and subtitle limits, which costs CPU and adds buffering. PotPlayer direct-streams the original file over HTTP from the local TorBox proxy, so it seeks instantly with a full-cache bar and uses negligible server CPU while preserving the original video, audio and subtitle tracks."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do resume and watched status stay in sync between PotPlayer and Jellyfin?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A lightweight tracker posts the playback position to the Jellyfin Sessions Playing Progress endpoint every five seconds while PotPlayer runs. When you pass eighty percent, it marks the episode Played, so Next-Up advances and other clients resume correctly. You can verify it live in the watch console, show-playback-log.ps1."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What should I do when the T drive looks stale or libraries are empty after a reboot?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Start the mounts before Jellyfin, because a scan that races a downed VFS indexes stub files and empty views. Verify the drive paths exist, refresh the rclone RC cache on ports 5572 and 5573, confirm proxy health on port 8888, then trigger a Jellyfin library refresh. The included check scripts return Nagios-style exit codes and JSON for fast automated checks."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "What do I need installed, and which systems are supported?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Windows 10 or 11 x64 with PowerShell 7+, Jellyfin Server 10.x, PotPlayer x64 with the potplayer protocol registered, rclone with WinFsp and TorBox and Google Drive remotes, a TorBox API key, and Python 3.11 for the proxy, bridge and panel. Linux, macOS, Docker, Plex, Emby and remote hosting are not in scope. Google Drive sync is optional and TorBox is the primary cloud."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it safe to expose the panel or proxy to my local network?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Both bind to localhost with no login by design, so anyone on the network could control playback or services. Do not expose them without adding authentication and TLS. A Caddy or Cloudflared edge profile for secure remote access is on the roadmap, not part of the current release."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I install, update or remove it?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Clone the repository and run pwsh -File install.ps1, using -WhatIf first to preview every planned action. The guided alternative is setup-wizard.ps1. To update, stop the stack, pull the latest branch, re-run the installer and re-run the health checks. To remove it, run install.ps1 with -Uninstall. The full lifecycle is in docs/install.md."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it free, and what can I use it for?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. It is MIT licensed and free to use, modify and distribute, with no warranty. You need your own Jellyfin install, PotPlayer, rclone and a TorBox account. Use it responsibly: play only media you own or have the right to access, and respect the terms of service of TorBox, Jellyfin and any other service you connect. It is not affiliated with those projects."
+      }
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "MHJoy99",
+      "item": "https://github.com/MHJoy99"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "jellyfin-torbox-potplayer-stack",
+      "item": "https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/"
+    }
+  ]
+}
+</script>
+<script>document.documentElement.className+=' js'</script>
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+<defs>
+<symbol id="i-proxy" viewBox="0 0 24 24"><path d="M3 7h14M13 3l4 4-4 4M21 17H7M11 13l-4 4 4 4"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 8.5l6 3.5-6 3.5z"/></symbol>
+<symbol id="i-sync" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2M3 12A9 9 0 0 1 18.5 5.8M18.5 2v4h-4M5.5 22v-4h4"/></symbol>
+<symbol id="i-term" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 2-3 2M12 15h5"/></symbol>
+<symbol id="i-panel" viewBox="0 0 24 24"><path d="M3 3h8v8H3zM13 3h8v5h-8zM13 10h8v11h-8zM3 13h8v8H3z"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+<symbol id="i-drive" viewBox="0 0 24 24"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+<symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0M12 14l4-5"/></symbol>
+<symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2m12 4v-3.5a3 3 0 0 0-.8-2.3c2.8-.3 5.8-1.4 5.8-6.2a4.8 4.8 0 0 0-1.3-3.3 4.4 4.4 0 0 0-.1-3.3s-1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.4 2.7 5.4 3 5.4 3a4.4 4.4 0 0 0-.1 3.3A4.8 4.8 0 0 0 4 9.6c0 4.8 3 5.9 5.8 6.2A3 3 0 0 0 9 18.2V21"/></symbol>
+<symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M9 7h6"/></symbol>
+<symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3l10 18H2zM12 10v5M12 18h.01"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+</defs>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="jellyfin-torbox-potplayer-stack home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M12 9.5v13l11-6.5z" fill="#fff"/></svg>
+      <span>Jellyfin &times; TorBox &times; PotPlayer</span>
+    </a>
+    <ul>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#quickstart">Quick start</a></li>
+      <li><a href="#faq">FAQ</a></li>
+      <li class="keep"><a class="btn primary" href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack">GitHub</a></li>
+    </ul>
+  </div>
+</header>
+
+<main id="main">
+<div id="top"></div>
+<section class="hero" aria-labelledby="h1">
+  <div class="wrap">
+    <span class="eyebrow"><i></i>Windows 10/11 &middot; PowerShell 7+ &middot; MIT</span>
+    <h1 id="h1">Direct-stream 4K from <span class="grad">TorBox</span><span class="br"> into PotPlayer.</span></h1>
+    <p class="lede"><b>Jellyfin library + TorBox cloud + PotPlayer playback, on Windows, with no transcoding.</b> Cloud torrents mount as local drives, Jellyfin keeps metadata, resume and Next-Up, and PotPlayer direct-streams full-season 4K through a local proxy. A loopback-only panel owns start/stop, health and Play-in-PotPlayer.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-github"/></svg>Get it on GitHub</a>
+      <a class="btn" href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/index.md"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-book"/></svg>Read the docs</a>
+    </div>
+    <div class="chips" aria-label="At a glance">
+      <span class="chip">Jellyfin 10.x</span><span class="chip">TorBox</span><span class="chip">PotPlayer x64</span><span class="chip">rclone VFS</span><span class="chip">Python 3.11</span><span class="chip">Loopback-only by default</span>
+    </div>
+    <div class="stage">
+<svg class="hsv" viewBox="0 0 1120 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="hvt hvd">
+<title id="hvt">A 4K title streaming from TorBox through the local proxy into PotPlayer</title>
+<desc id="hvd">Animated diagram: the TorBox cloud hands a fresh CDN link to the local proxy on port 8888, the proxy serves a never-expiring local URL to PotPlayer, which plays a 4K title with no transcoding. A sync tracker posts progress to Jellyfin every 5 seconds and marks the episode Played at 80 percent.</desc>
+<defs>
+<linearGradient id="hg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#d946ef"/><stop offset="1" stop-color="#ec4899"/></linearGradient>
+<linearGradient id="hbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b0716"/><stop offset="1" stop-color="#170a27"/></linearGradient>
+<linearGradient id="hsc" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b0f45"/><stop offset=".55" stop-color="#6b2490"/><stop offset="1" stop-color="#e5487f"/></linearGradient>
+<radialGradient id="hsun"><stop offset="0" stop-color="#fff1c9"/><stop offset=".45" stop-color="#ff9ec4"/><stop offset="1" stop-color="#ff9ec4" stop-opacity="0"/></radialGradient>
+<radialGradient id="hcl" cx=".5" cy=".5" r=".6"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".35"/><stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/></radialGradient>
+<filter id="hgl" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="3"/></filter>
+<clipPath id="hwin"><rect x="700" y="28" width="390" height="270" rx="16"/></clipPath>
+</defs>
+<rect width="1120" height="440" fill="url(#hbg)"/>
+<circle cx="120" cy="200" r="190" fill="url(#hcl)"/>
+<g fill="#fff" opacity=".35"><circle cx="300" cy="60" r="1.2"/><circle cx="520" cy="40" r="1"/><circle cx="640" cy="90" r="1.3"/><circle cx="90" cy="70" r="1"/><circle cx="1105" cy="330" r="1.2"/><circle cx="430" cy="420" r="1"/></g>
+
+<!-- TorBox cloud -->
+<rect x="30" y="140" width="180" height="120" rx="18" fill="#150f27" stroke="rgba(255,255,255,.14)"/>
+<path d="M92 208h56a19 19 0 0 0 3-38 28 28 0 0 0-53-6 22 22 0 0 0-6 44z" fill="url(#hg)" opacity=".95"/>
+<text x="120" y="233" text-anchor="middle" font-size="15" font-weight="700" fill="#f6f3fd" font-family="inherit">TorBox cloud</text>
+<text x="120" y="251" text-anchor="middle" font-size="11.5" fill="#aaa2c6" font-family="inherit">4K REMUX · CDN</text>
+
+<!-- flow 1 -->
+<path class="flow" d="M210 200H377" stroke="#8b5cf6" stroke-width="2" fill="none"/>
+<polygon points="385,200 376,195 376,205" fill="#a78bfa"/>
+<text x="297" y="182" text-anchor="middle" font-size="11.5" fill="#aaa2c6" font-family="inherit">fresh CDN link</text>
+<text x="297" y="224" text-anchor="middle" font-size="11" fill="#7b6fa0" font-family="inherit">per request</text>
+<g filter="url(#hgl)" opacity=".9"><circle class="pkt" style="offset-path:path('M210 200H385')" r="5" fill="#ec4899"/><circle class="pkt" style="offset-path:path('M210 200H385');--d:.87s" r="5" fill="#ec4899"/><circle class="pkt" style="offset-path:path('M210 200H385');--d:1.74s" r="5" fill="#ec4899"/></g>
+<circle class="pkt" style="offset-path:path('M210 200H385')" r="3" fill="#fff"/><circle class="pkt" style="offset-path:path('M210 200H385');--d:.87s" r="3" fill="#fff"/><circle class="pkt" style="offset-path:path('M210 200H385');--d:1.74s" r="3" fill="#fff"/>
+
+<!-- proxy -->
+<rect x="385" y="146" width="180" height="108" rx="18" fill="#150f27" stroke="url(#hg)" stroke-width="1.6"/>
+<circle class="spin" cx="540" cy="170" r="9" fill="none" stroke="#ec4899" stroke-width="2" stroke-dasharray="14 8" stroke-linecap="round"/>
+<text x="475" y="190" text-anchor="middle" font-size="16" font-weight="800" fill="#f6f3fd" font-family="inherit">torbox-proxy</text>
+<text x="475" y="212" text-anchor="middle" font-size="12" fill="#c4b5fd" font-family="Consolas,ui-monospace,monospace">127.0.0.1:8888</text>
+<text x="475" y="236" text-anchor="middle" font-size="11.5" fill="#f9a8d4" font-family="inherit">302 → fresh CDN</text>
+
+<!-- flow 2 -->
+<path class="flow" d="M565 200H692" stroke="#d946ef" stroke-width="2" fill="none"/>
+<polygon points="700,200 691,195 691,205" fill="#f0abfc"/>
+<text x="632" y="182" text-anchor="middle" font-size="11.5" fill="#aaa2c6" font-family="inherit">stable URL</text>
+<text x="632" y="224" text-anchor="middle" font-size="11" fill="#7b6fa0" font-family="inherit">HTTP Range</text>
+<g filter="url(#hgl)" opacity=".9"><circle class="pkt" style="offset-path:path('M565 200H700');--d:.4s" r="5" fill="#ec4899"/><circle class="pkt" style="offset-path:path('M565 200H700');--d:1.3s" r="5" fill="#ec4899"/></g>
+<circle class="pkt" style="offset-path:path('M565 200H700');--d:.4s" r="3" fill="#fff"/><circle class="pkt" style="offset-path:path('M565 200H700');--d:1.3s" r="3" fill="#fff"/>
+
+<!-- PotPlayer window -->
+<rect x="700" y="28" width="390" height="270" rx="16" fill="#05030b"/>
+<g clip-path="url(#hwin)">
+  <rect x="700" y="28" width="390" height="30" fill="#140d25"/>
+  <circle cx="718" cy="43" r="4" fill="#ec4899"/><circle cx="734" cy="43" r="4" fill="#a78bfa"/><circle cx="750" cy="43" r="4" fill="#4c3b7d"/>
+  <text x="772" y="47" font-size="12" fill="#aaa2c6" font-family="inherit">PotPlayer x64 · direct stream</text>
+  <rect x="700" y="58" width="390" height="196" fill="url(#hsc)"/>
+  <circle class="sun" cx="900" cy="158" r="46" fill="url(#hsun)"/>
+  <polygon points="700,254 700,196 760,156 812,194 872,138 934,198 992,148 1090,208 1090,254" fill="#12061f"/>
+  <polygon points="700,254 700,224 780,204 860,232 960,208 1090,238 1090,254" fill="#080312"/>
+  <rect x="700" y="254" width="390" height="44" fill="#0e0819"/>
+</g>
+<rect x="700" y="28" width="390" height="270" rx="16" fill="none" stroke="url(#hg)" stroke-width="1.6"/>
+<rect x="714" y="70" width="46" height="24" rx="7" fill="rgba(0,0,0,.55)" stroke="#f0abfc" stroke-opacity=".7"/>
+<text x="737" y="87" text-anchor="middle" font-size="13" font-weight="800" fill="#fff" font-family="inherit">4K</text>
+<rect x="964" y="70" width="112" height="24" rx="12" fill="rgba(0,0,0,.55)" stroke="#a78bfa" stroke-opacity=".6"/>
+<text x="1020" y="86" text-anchor="middle" font-size="11.5" font-weight="700" fill="#fff" font-family="inherit">no transcoding</text>
+<text x="714" y="240" font-size="12.5" font-weight="600" fill="#fff" opacity=".9" font-family="inherit">Demo title · S01E04</text>
+<polygon points="716,268 716,286 731,277" fill="#fff"/>
+<rect x="752" y="272" width="248" height="6" rx="3" fill="rgba(255,255,255,.16)"/>
+<rect class="fill" x="752" y="272" width="248" height="6" rx="3" fill="url(#hg)"/>
+<circle class="knob" cx="752" cy="275" r="6.5" fill="#fff"/>
+<line x1="950.4" y1="265" x2="950.4" y2="285" stroke="#ec4899" stroke-width="2"/>
+<circle class="tk" cx="834.7" cy="275" r="3.2" fill="#fff"/>
+<circle class="tk t2" cx="917.3" cy="275" r="3.2" fill="#fff"/>
+<text x="1012" y="279" font-size="11" fill="#aaa2c6" font-family="inherit">resume ✓</text>
+<g class="played"><rect x="896" y="216" width="108" height="26" rx="13" fill="url(#hg)"/><text x="950" y="233.5" text-anchor="middle" font-size="12.5" font-weight="800" fill="#fff" font-family="inherit">Played · 80%</text></g>
+
+<!-- Jellyfin -->
+<rect x="385" y="338" width="250" height="78" rx="18" fill="#150f27" stroke="rgba(255,255,255,.14)"/>
+<circle cx="425" cy="377" r="17" fill="none" stroke="url(#hg)" stroke-width="2.5"/>
+<polygon points="419,369 419,385 433,377" fill="url(#hg)"/>
+<text x="454" y="373" font-size="16" font-weight="800" fill="#f6f3fd" font-family="inherit">Jellyfin</text>
+<text x="518" y="373" font-size="12" fill="#c4b5fd" font-family="Consolas,ui-monospace,monospace">:8096</text>
+<text x="454" y="394" font-size="11.5" fill="#aaa2c6" font-family="inherit">library · resume · Next-Up</text>
+
+<!-- sync return path -->
+<path class="flow" d="M895 298C895 372 800 377 643 377" stroke="#ec4899" stroke-width="2" fill="none"/>
+<polygon points="635,377 645,372 645,382" fill="#f472b6"/>
+<g filter="url(#hgl)"><circle class="pkt syn" style="offset-path:path('M895 298C895 372 800 377 643 377');animation-name:tick" r="6" fill="#ec4899"/></g>
+<circle class="pkt syn" style="offset-path:path('M895 298C895 372 800 377 643 377');animation-name:tick" r="3.2" fill="#fff"/>
+<text x="780" y="412" text-anchor="middle" font-size="12" font-weight="600" fill="#f9a8d4" font-family="inherit">sync-tracker: progress tick every 5 s</text>
+<text x="780" y="428" text-anchor="middle" font-size="11" fill="#7b6fa0" font-family="inherit">marks Played at 80% so Next-Up advances</text>
+</svg>
+    </div>
+    <div class="legend">
+      <div><b>Never-expiring local URLs</b>The proxy mints a fresh CDN link per request, so stale links do not break playback.</div>
+      <div><b>Resume tick every 5 s</b>The sync tracker posts progress to Jellyfin while PotPlayer plays.</div>
+      <div><b>Played at 80%</b>Next-Up keeps working on every Jellyfin client.</div>
+    </div>
+    <div class="stats rv">
+      <div><b>5 s</b><span>progress ticks back to Jellyfin</span></div>
+      <div><b>80%</b><span>marks an episode Played</span></div>
+      <div><b>6</b><span>loopback ports (services + rclone RC)</span></div>
+      <div><b>9</b><span>suites in the regression test harness</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="alt" aria-labelledby="f-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Features</span><h2 id="f-h">Everything between the cloud and the couch.</h2>
+    <p>Six moving parts, one chain. Each one is a script or service in the repo, so you can read exactly what runs.</p></div>
+    <div class="grid g3">
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-proxy"/></svg></div><h3>TorBox proxy</h3><p>Stable local URLs that never expire. It refreshes short-lived CDN links per request and caches <code>mylist</code> to stay fast.</p><span class="meta">server/torbox-proxy.py &middot; :8888</span></article>
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-play"/></svg></div><h3>One-click play</h3><p>Jellyfin Play hands a <code>potplayer://</code> link to Windows. The launcher picks the right file, refreshes stale cache and opens the full season at your resume point.</p><span class="meta">potplayer-launcher.ps1 &middot; bridge :18099</span></article>
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-sync"/></svg></div><h3>Resume sync</h3><p>Posts progress every 5 s and marks Played at 80%, so Next-Up keeps working on every client.</p><span class="meta">potplayer-sync-tracker.ps1</span></article>
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-term"/></svg></div><h3>Watch console</h3><p>A live tail of launcher and playback ticks, episode hints and 80% Played events.</p><span class="meta">show-playback-log.ps1</span></article>
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-panel"/></svg></div><h3>Control panel</h3><p>Loopback-only Start / Stop / Restart, status, metrics and Play buttons. No console juggling.</p><span class="meta">control-panel/control_panel.py &middot; :18080</span></article>
+      <article class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-shield"/></svg></div><h3>Supervisor</h3><p>Ordered start (mounts, proxy, bridge, Jellyfin, panel) plus a watchdog, mutex and PID files.</p><span class="meta">supervisor.ps1 &middot; -Mode Run / Start / Stop / Status</span></article>
+    </div>
+    <div class="also rv" aria-label="Optional and secondary features">
+      <span><b>Optional:</b> Google Drive <code>.strm</code> sync</span>
+      <span><code>FULLCACHE=1</code> full-file prefetch</span>
+      <span>Full-season <code>.dpl</code> with <code>/seek=</code> resume</span>
+      <span>Nagios-style <code>check_*.ps1</code> probes (<code>-AsJson</code>)</span>
+      <span>rclone MCP bridge</span>
+      <span>Prometheus <code>/metrics</code> on the proxy</span>
+    </div>
+  </div>
+</section>
+
+<section id="play" aria-labelledby="p-h">
+  <div class="wrap split">
+    <div class="rv">
+      <span class="kicker">Press play</span>
+      <h2 id="p-h">One click, end to end.</h2>
+      <p style="color:var(--mut)">This is the repo's own walkthrough of a single episode, from the panel to the progress bar and back to Jellyfin.</p>
+      <div class="cb"><pre><code><span class="c"># the whole loop, in your browser</span>
+http://127.0.0.1:18080   <span class="c"># Start all</span>
+http://127.0.0.1:8096    <span class="c"># Jellyfin: Play-in-PotPlayer</span></code></pre></div>
+    </div>
+    <ol class="steps">
+      <li class="rv"><h3>Start everything</h3><p>Open the panel and click <b>Start all</b>. Mounts come first, then proxy <code>:8888</code>, bridge <code>:18099</code>, Jellyfin <code>:8096</code> and the panel itself.</p></li>
+      <li class="rv"><h3>Pick a show in Jellyfin</h3><p>Metadata, posters and Next-Up come from TMDB plus the <code>.strm</code> scan.</p></li>
+      <li class="rv"><h3>Press Play-in-PotPlayer</h3><p>A <code>potplayer://</code> link is built and handed to Windows.</p></li>
+      <li class="rv"><h3>Launcher resolves</h3><p>It maps the Jellyfin item to a <code>.strm</code> on <code>T:\</code>, refreshes a stale VFS through rclone RC <code>:5572</code> if needed, and picks the TorBox CDN or the <code>:8888</code> proxy fallback.</p></li>
+      <li class="rv"><h3>PotPlayer opens the season</h3><p>A full-season UTF-16 <code>.dpl</code> loads with your episode queued and <code>/seek=</code> set to your Jellyfin resume position.</p></li>
+      <li class="rv"><h3>Watch the bar fill</h3><p>Direct HTTP from <code>:8888/torbox/...</code> 302s to a fresh CDN URL, so 4K REMUX direct-streams with a full-cache seek bar.</p></li>
+      <li class="rv"><h3>Resume stays in sync</h3><p>Progress is POSTed every 5 s and the episode is marked Played at 80%. Pause in Jellyfin Web, resume in PotPlayer, and Next-Up advances.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="how" class="alt" aria-labelledby="h-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">How it works</span><h2 id="h-h">One required chain, supervised end to end.</h2>
+    <p>Every play follows the same path. The proxy hides expiring CDN links behind stable loopback URLs; the sync tracker closes the loop back to Jellyfin.</p></div>
+    <div class="diagram rv">
+<svg class="dg dh" viewBox="0 0 1120 450" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dght dghd"><title id="dght">Architecture: TorBox, rclone VFS, Jellyfin, bridge, launcher, proxy and PotPlayer</title><desc id="dghd">Seven numbered stages: TorBox cloud, rclone VFS mount on T:, Jellyfin on 8096, PotPlayer bridge on 18099, the launcher, the TorBox proxy on 8888, and PotPlayer x64. The proxy asks TorBox for a fresh CDN link, and the sync tracker posts progress from PotPlayer back to Jellyfin every five seconds. A supervisor watchdog and the control panel on 18080 sit underneath.</desc><defs><linearGradient id="dgh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#d946ef"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs><path class="flow" d="M156 214H176" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="184,214 175,209 175,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M156 214H184');--d:0.00s" r="4" fill="#ec4899"/><path class="flow" d="M312 214H332" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="340,214 331,209 331,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M312 214H340');--d:0.45s" r="4" fill="#ec4899"/><path class="flow" d="M468 214H488" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="496,214 487,209 487,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M468 214H496');--d:0.90s" r="4" fill="#ec4899"/><path class="flow" d="M624 214H644" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="652,214 643,209 643,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M624 214H652');--d:1.35s" r="4" fill="#ec4899"/><path class="flow" d="M780 214H800" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="808,214 799,209 799,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M780 214H808');--d:1.80s" r="4" fill="#ec4899"/><path class="flow" d="M936 214H956" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="964,214 955,209 955,219" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M936 214H964');--d:2.25s" r="4" fill="#ec4899"/><path class="flow rev" d="M872 170C872 60 92 60 92 162" stroke="#d946ef" stroke-width="2" fill="none"/><polygon points="92,170 87,161 97,161" fill="#d946ef"/><text x="482" y="114" text-anchor="middle" font-size="12.5" font-weight="700" style="fill:var(--text)" font-family="inherit">proxy asks TorBox for a fresh CDN link</text><text x="482" y="131" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">expiring tokens stay hidden behind stable loopback URLs</text><path class="flow" d="M1028 258C1028 368 404 368 404 266" stroke="#ec4899" stroke-width="2" fill="none"/><polygon points="404,258 399,267 409,267" fill="#ec4899"/><text x="716" y="300" text-anchor="middle" font-size="12.5" font-weight="700" style="fill:var(--text)" font-family="inherit">sync-tracker: progress every 5 s, Played at 80%</text><text x="716" y="317" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">POST /Sessions/Playing/Progress, so Next-Up advances</text><circle class="pkt" style="offset-path:path('M1028 258C1028 368 404 368 404 266');--d:0.2s" r="4.5" fill="#ec4899"/><circle class="pkt" style="offset-path:path('M872 170C872 60 92 60 92 162');--d:0.9s" r="4.5" fill="#ec4899"/><g><rect x="28" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="42" cy="184" r="10" fill="url(#dgh)"/><text x="42" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">1</text><text x="92" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">TorBox cloud</text><text x="92" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">torrent / Usenet</text><text x="92" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">CDN links</text></g><g><rect x="184" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="198" cy="184" r="10" fill="url(#dgh)"/><text x="198" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">2</text><text x="248" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">rclone VFS</text><text x="248" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">T:\ mount</text><text x="248" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">RC :5572</text></g><g><rect x="340" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="354" cy="184" r="10" fill="url(#dgh)"/><text x="354" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">3</text><text x="404" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">Jellyfin</text><text x="404" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:8096 · TMDB</text><text x="404" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">resume · Next-Up</text></g><g><rect x="496" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="510" cy="184" r="10" fill="url(#dgh)"/><text x="510" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">4</text><text x="560" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">PotPlayer Bridge</text><text x="560" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:18099</text><text x="560" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">health gate</text></g><g><rect x="652" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="666" cy="184" r="10" fill="url(#dgh)"/><text x="666" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">5</text><text x="716" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">Launcher</text><text x="716" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">GUID resolve</text><text x="716" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">stale-VFS refresh</text></g><g><rect x="808" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="822" cy="184" r="10" fill="url(#dgh)"/><text x="822" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">6</text><text x="872" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">Proxy</text><text x="872" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:8888</text><text x="872" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">302 → fresh CDN</text></g><g><rect x="964" y="170" width="128" height="88" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="978" cy="184" r="10" fill="url(#dgh)"/><text x="978" y="188" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">7</text><text x="1028" y="214" text-anchor="middle" font-size="14" font-weight="800" style="fill:var(--text)" font-family="inherit">PotPlayer x64</text><text x="1028" y="233" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">full-season .dpl</text><text x="1028" y="248" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">/seek= resume</text></g><rect x="28" y="366" width="1064" height="64" rx="14" style="fill:none;stroke:var(--line2)" stroke-dasharray="5 6"/><text x="52" y="393" font-size="13.5" font-weight="800" style="fill:var(--text)" font-family="inherit">supervisor.ps1 watchdog</text><text x="52" y="412" font-size="11.5" style="fill:var(--mut)" font-family="inherit">15 s checks · mutex · PID files · aborts on first failed gate</text><text x="560" y="393" text-anchor="middle" font-size="12.5" font-weight="700" style="fill:var(--text)" font-family="inherit">start order: mounts → proxy → bridge → Jellyfin → panel</text><text x="560" y="412" text-anchor="middle" font-size="11.5" style="fill:var(--mut)" font-family="inherit">Stop reverses the order</text><text x="1068" y="393" text-anchor="end" font-size="13.5" font-weight="800" style="fill:var(--text)" font-family="inherit">Control panel :18080</text><text x="1068" y="412" text-anchor="end" font-size="11.5" style="fill:var(--mut)" font-family="inherit">Start all · health · metrics · Play</text></svg>
+<svg class="dg dv" viewBox="0 0 360 796" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dgvt dgvd"><title id="dgvt">Architecture: TorBox, rclone VFS, Jellyfin, bridge, launcher, proxy and PotPlayer</title><desc id="dgvd">Seven numbered stages: TorBox cloud, rclone VFS mount on T:, Jellyfin on 8096, PotPlayer bridge on 18099, the launcher, the TorBox proxy on 8888, and PotPlayer x64. The proxy asks TorBox for a fresh CDN link, and the sync tracker posts progress from PotPlayer back to Jellyfin every five seconds. A supervisor watchdog and the control panel on 18080 sit underneath.</desc><defs><linearGradient id="dgv" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset=".55" stop-color="#d946ef"/><stop offset="1" stop-color="#ec4899"/></linearGradient></defs><path class="flow" d="M180 84V110" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,118 175,109 185,109" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 84V118');--d:0.00s" r="4" fill="#ec4899"/><path class="flow" d="M180 180V206" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,214 175,205 185,205" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 180V214');--d:0.45s" r="4" fill="#ec4899"/><path class="flow" d="M180 276V302" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,310 175,301 185,301" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 276V310');--d:0.90s" r="4" fill="#ec4899"/><path class="flow" d="M180 372V398" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,406 175,397 185,397" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 372V406');--d:1.35s" r="4" fill="#ec4899"/><path class="flow" d="M180 468V494" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,502 175,493 185,493" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 468V502');--d:1.80s" r="4" fill="#ec4899"/><path class="flow" d="M180 564V590" stroke="#a78bfa" stroke-width="2" fill="none"/><polygon points="180,598 175,589 185,589" fill="#a78bfa"/><circle class="pkt" style="offset-path:path('M180 564V598');--d:2.25s" r="4" fill="#ec4899"/><path class="flow rev" d="M62 533C12 533 12 53 54 53" stroke="#d946ef" stroke-width="2" fill="none"/><polygon points="62,53 53,48 53,58" fill="#d946ef"/><text transform="translate(16 293) rotate(-90)" text-anchor="middle" font-size="11.5" font-weight="700" style="fill:var(--text)" font-family="inherit">proxy asks TorBox: fresh CDN link</text><path class="flow" d="M298 629C348 629 348 245 306 245" stroke="#ec4899" stroke-width="2" fill="none"/><polygon points="298,245 307,240 307,250" fill="#ec4899"/><text transform="translate(348 437) rotate(90)" text-anchor="middle" font-size="11.5" font-weight="700" style="fill:var(--text)" font-family="inherit">sync-tracker: tick every 5 s · Played at 80%</text><circle class="pkt" style="offset-path:path('M298 629C348 629 348 245 306 245');--d:0.2s" r="4.5" fill="#ec4899"/><circle class="pkt" style="offset-path:path('M62 533C12 533 12 53 54 53');--d:0.9s" r="4.5" fill="#ec4899"/><g><rect x="62" y="22" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="36" r="10" fill="url(#dgv)"/><text x="76" y="40" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">1</text><text x="96" y="48" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">TorBox cloud</text><text x="96" y="68" font-size="11.5" style="fill:var(--mut)" font-family="inherit">torrent / Usenet cloud · CDN links</text></g><g><rect x="62" y="118" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="132" r="10" fill="url(#dgv)"/><text x="76" y="136" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">2</text><text x="96" y="144" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">rclone VFS</text><text x="96" y="164" font-size="11.5" style="fill:var(--mut)" font-family="inherit">T:\ mount · RC :5572</text></g><g><rect x="62" y="214" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="228" r="10" fill="url(#dgv)"/><text x="76" y="232" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">3</text><text x="96" y="240" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">Jellyfin</text><text x="96" y="260" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:8096 · TMDB · resume · Next-Up</text></g><g><rect x="62" y="310" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="324" r="10" fill="url(#dgv)"/><text x="76" y="328" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">4</text><text x="96" y="336" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">PotPlayer Bridge</text><text x="96" y="356" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:18099 · health gate</text></g><g><rect x="62" y="406" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="420" r="10" fill="url(#dgv)"/><text x="76" y="424" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">5</text><text x="96" y="432" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">Launcher</text><text x="96" y="452" font-size="11.5" style="fill:var(--mut)" font-family="inherit">GUID resolve · stale-VFS refresh</text></g><g><rect x="62" y="502" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="516" r="10" fill="url(#dgv)"/><text x="76" y="520" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">6</text><text x="96" y="528" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">Proxy</text><text x="96" y="548" font-size="11.5" style="fill:var(--mut)" font-family="inherit">:8888 · 302 → fresh CDN</text></g><g><rect x="62" y="598" width="236" height="62" rx="14" style="fill:var(--card2);stroke:var(--line2)"/><circle cx="76" cy="612" r="10" fill="url(#dgv)"/><text x="76" y="616" text-anchor="middle" font-size="11.5" font-weight="800" fill="#fff" font-family="inherit">7</text><text x="96" y="624" font-size="14.5" font-weight="800" style="fill:var(--text)" font-family="inherit">PotPlayer x64</text><text x="96" y="644" font-size="11.5" style="fill:var(--mut)" font-family="inherit">full-season .dpl · /seek= resume</text></g><rect x="20" y="700" width="320" height="86" rx="14" style="fill:none;stroke:var(--line2)" stroke-dasharray="5 6"/><text x="36" y="725" font-size="13.5" font-weight="800" style="fill:var(--text)" font-family="inherit">supervisor.ps1 watchdog (15 s)</text><text x="36" y="744" font-size="11.5" style="fill:var(--mut)" font-family="inherit">mounts → proxy → bridge → Jellyfin → panel</text><text x="36" y="763" font-size="11.5" style="fill:var(--mut)" font-family="inherit">Control panel :18080 · Stop reverses the order</text></svg>
+    </div>
+    <div class="grid g3" style="margin-top:22px">
+      <div class="card rv"><h3>Proxy leg</h3><p>Hides expiring CDN tokens behind stable loopback URLs. Only the short resolver result is cached; expiry becomes a redirect.</p></div>
+      <div class="card rv"><h3>Bridge leg</h3><p>Exposes <code>/health</code> and <code>/status</code> and refuses to start unless the proxy is healthy. The supervisor and panel enforce the same gate.</p></div>
+      <div class="card rv"><h3>Panel leg</h3><p>Merges live process scans with proxy <code>/metrics</code>, and runs bulk Start / Restart in mount-first order with health waits. Stop reverses it.</p></div>
+    </div>
+    <p class="note rv">Full service map, session model and boot order: <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/ARCHITECTURE.md">ARCHITECTURE.md</a>. Day-2 operations: <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/RUNBOOK.md">RUNBOOK.md</a>.</p>
+  </div>
+</section>
+
+<section id="panel" aria-labelledby="pn-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Control panel &amp; watch console</span><h2 id="pn-h">Green means go.</h2>
+    <p>Service cards show a process match plus a real health probe, so a green badge maps to something that is actually running.</p></div>
+    <div class="mock">
+      <div class="win rv" role="img" aria-label="Illustrated mockup of the control panel showing six healthy service cards and the Start all, Restart all, Stop all and Sync TorBox buttons">
+        <div class="bar"><i></i><i></i><i></i><span>http://127.0.0.1:18080</span></div>
+        <div class="body">
+          <div class="btns"><b>Start all</b><b>Restart all</b><b>Stop all</b><b>Sync TorBox</b></div>
+          <div class="svc">
+            <div><b>TorBox Mount</b><u>Healthy</u><em>rclone + RC :5572</em></div>
+            <div><b>Drive Mount</b><u>Healthy</u><em>F:\Media</em></div>
+            <div><b>TorBox Proxy</b><u>Healthy</u><em>:8888</em></div>
+            <div><b>PotPlayer Bridge</b><u>Healthy</u><em>:18099</em></div>
+            <div><b>Jellyfin</b><u>Healthy</u><em>:8096</em></div>
+            <div><b>Panel</b><u>Healthy</u><em>:18080</em></div>
+          </div>
+        </div>
+      </div>
+      <div class="win rv" role="img" aria-label="Illustrated mockup of the watch console showing a resume line, five second progress ticks and an 80 percent Played event">
+        <div class="bar"><i></i><i></i><i></i><span>show-playback-log.ps1</span></div>
+        <div class="body"><div class="log">
+<div class="logl" style="--d:.2s"><span class="k">RESUME</span> position from Jellyfin &rarr; /seek=</div>
+<div class="logl" style="--d:1.2s"><span class="t">+5s</span> POST /Sessions/Playing/Progress</div>
+<div class="logl" style="--d:2.2s"><span class="t">+10s</span> POST /Sessions/Playing/Progress</div>
+<div class="logl" style="--d:3.2s"><span class="t">+15s</span> POST /Sessions/Playing/Progress</div>
+<div class="logl" style="--d:4.2s"><span class="pk">80%</span> <span class="g">Played</span> &rarr; Next-Up advances</div>
+        </div></div>
+      </div>
+    </div>
+    <p class="note rv">Illustrative mockups built from the repo docs, with demo values. The repo has no screenshots committed yet; its capture checklist lives in <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/assets/screenshots/PLACEHOLDER.md">assets/screenshots/PLACEHOLDER.md</a>. Panel cards and endpoints are documented in <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/panel.md">docs/panel.md</a>.</p>
+  </div>
+</section>
+
+<section id="quickstart" class="alt" aria-labelledby="q-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Quick start</span><h2 id="q-h">Installed in about 30 seconds.</h2>
+    <p>For a fresh PC with the prerequisites already installed: PotPlayer x64, rclone + WinFsp, Python 3.11, Jellyfin 10.x files and a TorBox account. Pick one path.</p></div>
+    <div class="tabs rv">
+      <input type="radio" name="tab" id="t1" checked><input type="radio" name="tab" id="t2"><input type="radio" name="tab" id="t3">
+      <div class="tl" role="presentation"><label for="t1">A &middot; One-click (recommended)</label><label for="t2">B &middot; Guided wizard</label><label for="t3">C &middot; Manual (advanced)</label></div>
+      <div class="tp tp1">
+        <div class="cb"><pre><code>git clone https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack.git
+cd jellyfin-torbox-potplayer-stack
+pwsh -File install.ps1 -WhatIf
+pwsh -File install.ps1</code></pre></div>
+        <p><code>install.ps1</code> prompts for <code>TORBOX_API_KEY</code> (masked), validates it with a live API call, initializes the <code>F:\Jellyfin</code> directory layout, registers the <code>potplayer://</code> protocol handler and the <code>MediaStackSupervisor</code> scheduled task, starts the stack and runs port health probes (<code>:8888</code>, <code>:18099</code>, <code>:18080</code>, <code>:8096</code>). Switches (<code>-WhatIf</code>, <code>-Uninstall</code>, <code>-SkipTasks</code>, <code>-Portable</code>, <code>-TorboxApiKey</code>, <code>-KeyScope</code>) are in <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/install.md">docs/install.md</a>.</p>
+      </div>
+      <div class="tp tp2">
+        <div class="cb"><pre><code>pwsh -File setup-wizard.ps1</code></pre></div>
+        <p>Step-by-step: masked key entry, library root folders, Jellyfin connection test, PotPlayer auto-detection, rclone configuration, port availability and playback mode, with a dry-run preview before anything is applied. Supports <code>-Resume</code> and <code>-NonInteractive</code>.</p>
+      </div>
+      <div class="tp tp3">
+        <div class="cb"><pre><code><span class="c"># Run component installers in dependency order:</span>
+pwsh -File install-all.ps1
+
+<span class="c"># Perform one-time ordered service startup (mounts -&gt; proxy -&gt; bridge -&gt; Jellyfin -&gt; panel):</span>
+pwsh -File supervisor.ps1 -Mode Start</code></pre></div>
+        <p>Full dependency order and verification steps live in <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/install.md">docs/install.md</a> and <a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/docs/quickstart.md">docs/quickstart.md</a>.</p>
+      </div>
+    </div>
+    <div class="split" style="margin-top:34px">
+      <div class="rv"><h3>Then open the panel</h3>
+        <div class="cb"><pre><code>http://127.0.0.1:18080</code></pre></div>
+        <p style="color:var(--mut)">Click <b>Start all</b>, wait for green, open Jellyfin at <code>http://127.0.0.1:8096</code>, press Play-in-PotPlayer. The full-season playlist opens at your resume point.</p></div>
+      <div class="rv"><h3>Secrets stay in the environment</h3>
+        <div class="cb"><pre><code><span class="c"># Persistent (survives reboot, read live by supervisor):</span>
+[Environment]::SetEnvironmentVariable("TORBOX_API_KEY", "&lt;your-key&gt;", "User")
+$env:TORBOX_API_KEY = [Environment]::GetEnvironmentVariable("TORBOX_API_KEY", "User")
+
+<span class="c"># Verify without leaking the key:</span>
+pwsh -File check_status.ps1 -AsJson; $LASTEXITCODE  <span class="c"># expect 0</span>
+Invoke-RestMethod http://127.0.0.1:8888/health</code></pre></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="config" aria-labelledby="c-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Configuration &amp; ports</span><h2 id="c-h">All secrets from the environment.</h2>
+    <p>No tokens in files, no <code>.env</code> committed. Every service binds loopback only by default.</p></div>
+    <div class="split">
+      <div class="rv"><h3>Environment variables</h3>
+      <div class="tw"><table><thead><tr><th>Variable</th><th>Required</th><th>Default / use</th></tr></thead><tbody>
+        <tr><td><code>TORBOX_API_KEY</code></td><td>Yes</td><td>Empty: the proxy refuses to start. Re-read live from the Machine/User registry by the supervisor.</td></tr>
+        <tr><td><code>JELLYFIN_URL</code></td><td>No</td><td><code>http://localhost:8096</code></td></tr>
+        <tr><td><code>JELLYFIN_USER</code> / <code>JELLYFIN_PASSWORD</code></td><td>For health checks</td><td>Used by <code>check_status.ps1</code> and <code>check_user_views.ps1</code>; never logged.</td></tr>
+        <tr><td><code>JELLYFIN_API_KEY</code></td><td>No</td><td>Automation: <code>gdrive-library-sync.ps1</code> for <code>POST /Library/Refresh</code>.</td></tr>
+        <tr><td><code>FULLCACHE</code></td><td>No</td><td><code>0</code>. Set <code>1</code> to prefetch the full file for a solid seek bar.</td></tr>
+        <tr><td><code>RCLONE_EXE</code> / <code>RCLONE_CONFIG</code></td><td>No</td><td>For the rclone MCP bridge; the real config file is untracked.</td></tr>
+      </tbody></table></div></div>
+      <div class="rv"><h3>Ports</h3>
+      <div class="tw"><table><thead><tr><th>Port</th><th>Service</th></tr></thead><tbody>
+        <tr><td><code>8888</code></td><td>TorBox proxy: <code>/health</code>, <code>/torbox/...</code> 302 to fresh CDN, <code>/mylist</code>, <code>/metrics</code></td></tr>
+        <tr><td><code>18099</code></td><td>PotPlayer bridge: <code>/health</code>, <code>/status</code>; health gate before every launch</td></tr>
+        <tr><td><code>18080</code></td><td>Control panel: status, metrics, playback buttons</td></tr>
+        <tr><td><code>8096</code></td><td>Jellyfin HTTP: web UI, <code>/System/Info/Public</code>, <code>/Videos/{id}/stream</code></td></tr>
+        <tr><td><code>5572</code></td><td>rclone RC, TorBox mount (<code>vfs/refresh</code>, <code>core/stats</code>)</td></tr>
+        <tr><td><code>5573</code></td><td>rclone RC, Google Drive mount</td></tr>
+      </tbody></table></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="tuning" class="alt" aria-labelledby="t-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Performance notes</span><h2 id="t-h">Pre-tuned for high-bitrate 4K.</h2>
+    <p>Defaults aimed at residential gigabit connections, taken from the repo's mount script and proxy.</p></div>
+    <div class="grid g3">
+      <div class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-drive"/></svg></div><h3>rclone VFS mount</h3><p><code>--vfs-cache-mode full</code> with a 25G cache cap, 12h max age and 30G min free space. Chunks start at 32M (fast first byte) and double to 256M with 128M read-ahead. Directory cache 15m. Keep the cache on an NVMe SSD.</p><span class="meta">mount-torbox.ps1</span></div>
+      <div class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-proxy"/></svg></div><h3>Local proxy</h3><p>Fresh CDN links by 302 with a token-bucket rate limiter, a shared <code>mylist</code> cache (10 minutes, singleflight coalescing) and HTTP/1.0 progressive streaming to avoid client hangs.</p><span class="meta">server/torbox-proxy.py</span></div>
+      <div class="card rv"><div class="ico"><svg aria-hidden="true"><use href="#i-gauge"/></svg></div><h3>Seek bar &amp; prefetch</h3><p>PotPlayer gets progressive HTTP straight from the proxy for instant seeking. Set <code>$env:FULLCACHE = "1"</code> before launch to cache the full file for ultra-high-bitrate REMUX.</p><span class="meta">~20 GB disk headroom suggested</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="usecases" aria-labelledby="u-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Who it's for</span><h2 id="u-h">Five people this stack was built for.</h2>
+    <p>From the repo's USECASES.md. Each plays only files they own or have the right to play.</p></div>
+    <div class="grid g3">
+      <div class="card rv"><h3>The 4K remux fan</h3><p>Direct-play large files, instant seeking, no stutter on high bitrates and no forced transcoding.</p></div>
+      <div class="card rv"><h3>The anime watcher</h3><p>Correct episode order, fast Next-Up and reliable subtitles, preserved on direct play.</p></div>
+      <div class="card rv"><h3>The family server</h3><p>Simple start and stop, green means go, and per-user resume and watched state.</p></div>
+      <div class="card rv"><h3>The debrid migrant</h3><p>Familiar instant links with your own catalog and history, and a proxy that keeps links fresh.</p></div>
+      <div class="card rv"><h3>The tinkerer</h3><p>Observable services: Prometheus metrics, JSON health output, an allowlisted automation bridge, assert-based smoke tests.</p></div>
+      <div class="card rv"><h3>Windows-first by design</h3><p>Windows 10/11 x64, Jellyfin 10.x, PotPlayer x64, rclone VFS. Linux, macOS, Docker, Plex and Emby are out of scope.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" class="alt" aria-labelledby="cm-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Comparison</span><h2 id="cm-h">An honest map.</h2>
+    <p>From the repo's COMPARISON.md. Every option is good at something; this stack is tuned for direct-play control on a Windows home server with cloud-backed libraries.</p></div>
+    <div class="tw rv"><table class="cmp"><thead><tr><th>Capability</th><th>This stack</th><th>Plex</th><th>Emby</th><th>Plain Jellyfin</th><th>Infuse</th></tr></thead><tbody>
+      <tr><td>License and cost</td><td>MIT, free, self-hosted</td><td>Freemium with paid tier</td><td>Freemium with paid Premiere</td><td>Free and open source</td><td>Paid app with free tier</td></tr>
+      <tr><td>Source availability</td><td>Fully open</td><td>Proprietary server</td><td>Proprietary with some open clients</td><td>Fully open</td><td>Proprietary</td></tr>
+      <tr><td>Setup effort</td><td>Manual, guided by installer and runbook</td><td>Guided, easiest for beginners</td><td>Guided, easy</td><td>Manual, moderate</td><td>Very easy on Apple devices</td></tr>
+      <tr><td>4K remux direct-play</td><td>Tuned for it via external player and local proxy</td><td>Yes, depends on client and server settings</td><td>Yes, depends on client and server settings</td><td>Yes, depends on client</td><td>Excellent on Apple hardware</td></tr>
+      <tr><td>External player choice</td><td>Yes, first-class queue and resume</td><td>Limited, client dependent</td><td>Limited, client dependent</td><td>Browser and app clients, DLNA</td><td>Natively its own player</td></tr>
+      <tr><td>Cloud and debrid style libraries</td><td>Built-in mount plus sync workflow</td><td>Via add-ons and manual mounts</td><td>Via plugins and manual mounts</td><td>Via manual mounts and plugins</td><td>Via cloud integrations</td></tr>
+      <tr><td>Local proxy with metrics</td><td>Included with cache and Prometheus endpoint</td><td>Not included</td><td>Not included</td><td>Not included</td><td>Not included</td></tr>
+      <tr><td>Web control panel</td><td>Included local panel for status and playback</td><td>Hosted dashboard plus apps</td><td>Hosted dashboard plus apps</td><td>Built-in dashboard</td><td>Native app UI</td></tr>
+      <tr><td>Best fit</td><td>Tinkerers who want control and logs</td><td>Households wanting polished apps</td><td>Households wanting live TV and apps</td><td>Self-hosters wanting open basics</td><td>Apple-first viewers wanting polish</td></tr>
+    </tbody></table></div>
+    <p class="note rv">No option wins everywhere. If another tool fits you better, that is a good outcome too (the repo's words).</p>
+  </div>
+</section>
+
+<section id="roadmap" aria-labelledby="r-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">Roadmap</span><h2 id="r-h">What's landed, what's planned.</h2>
+    <p><code>VERSION</code> is <code>1.0.0</code> with no newer tag cut. Work since then sits under <code>[Unreleased]</code> in the changelog. Items marked Planned are roadmap only; v1.1, v1.2 and v2.0 are planning milestones, not releases.</p></div>
+    <div class="rm">
+      <div class="card rv"><span class="tag done">Landed (unreleased)</span><ul><li>One-click installer <code>install.ps1</code></li><li>Setup wizard with resume and headless modes</li><li>12-file docs site under <code>docs/</code></li><li>Windows CI and secret scanning</li><li>9-suite regression harness</li><li>Rescued curation tools</li><li>Idempotent TorBox mount guard</li><li>Release automation toolkit</li></ul></div>
+      <div class="card rv"><span class="tag plan">Planned &middot; v1.1</span><ul><li>Playback timeline export (CSV)</li><li>One-command health bundle</li><li>Launcher resume accuracy pass</li><li>Quickstart polish with annotated screenshots</li></ul></div>
+      <div class="card rv"><span class="tag plan">Planned &middot; v1.2</span><ul><li>Multi-user play-state isolation</li><li>Proxy cache-hit tiles in the panel</li><li>Scheduled backup and DB vacuum</li><li>Cross-platform launcher research</li><li>Stdlib subtitle normalizer and metrics exporter</li></ul></div>
+      <div class="card rv"><span class="tag plan">Planned &middot; later</span><ul><li>One-click GUI installer with preflight checks</li><li>Offline-first metadata cache</li><li>Read-only mobile companion view</li><li>Community translation workflow</li><li>Stdlib Jellyfin API SDK</li></ul></div>
+    </div>
+    <p class="note rv">The README's older wish list also mentions Grafana dashboards and a Docker / Caddy / Cloudflared edge profile for remote access. Both are roadmap, not current.</p>
+  </div>
+</section>
+
+<section id="responsible" class="alt" style="padding:56px 0" aria-labelledby="rs-h">
+  <div class="wrap">
+    <div class="notice rv" role="note">
+      <svg aria-hidden="true"><use href="#i-warn"/></svg>
+      <div>
+        <p id="rs-h"><b>Use responsibly.</b> This project is neutral tooling that connects services you already use. Play only media you own or have the right to access, and respect the terms of service of TorBox, Jellyfin, TMDB and any other service you connect.</p>
+        <p>The panel and proxy bind to loopback and have no login by design. Do not expose them to your network without adding authentication and TLS. Keep your TorBox key in environment variables, never in files, issues or commits.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq" aria-labelledby="fq-h">
+  <div class="wrap" style="max-width:860px">
+    <div class="sec-head rv"><span class="kicker">FAQ</span><h2 id="fq-h">Questions, answered from the repo.</h2></div>
+    <div class="faq rv">
+<details open><summary>What does this stack do that plain Jellyfin cannot do on Windows?</summary><p>It mounts TorBox and Google Drive as local drives with rclone, serves fresh CDN URLs through a local proxy on port 8888, and launches PotPlayer with a full-season playlist at your exact resume point. Jellyfin keeps the library, metadata and watched state, while PotPlayer handles 4K direct-stream playback without transcoding or browser codec limits.</p></details>
+<details><summary>Where do I store my TorBox API key so it never leaks to GitHub?</summary><p>Store it only as a Windows environment variable named TORBOX_API_KEY at User or Machine scope, then restart the proxy and supervisor so child processes inherit it. Never paste the key into scripts, configs, issues or commits. The proxy refuses to start when the variable is empty, and rotation means updating the environment plus registry and restarting the services.</p></details>
+<details><summary>Why does PotPlayer start instantly while Jellyfin Web sometimes buffers on the same file?</summary><p>Jellyfin Web often remuxes or transcodes high-bitrate 4K REMUX files because of browser codec and subtitle limits, which costs CPU and adds buffering. PotPlayer direct-streams the original file over HTTP from the local TorBox proxy, so it seeks instantly with a full-cache bar and uses negligible server CPU while preserving the original video, audio and subtitle tracks.</p></details>
+<details><summary>How do resume and watched status stay in sync between PotPlayer and Jellyfin?</summary><p>A lightweight tracker posts the playback position to the Jellyfin Sessions Playing Progress endpoint every five seconds while PotPlayer runs. When you pass eighty percent, it marks the episode Played, so Next-Up advances and other clients resume correctly. You can verify it live in the watch console, show-playback-log.ps1.</p></details>
+<details><summary>What should I do when the T drive looks stale or libraries are empty after a reboot?</summary><p>Start the mounts before Jellyfin, because a scan that races a downed VFS indexes stub files and empty views. Verify the drive paths exist, refresh the rclone RC cache on ports 5572 and 5573, confirm proxy health on port 8888, then trigger a Jellyfin library refresh. The included check scripts return Nagios-style exit codes and JSON for fast automated checks.</p></details>
+<details><summary>What do I need installed, and which systems are supported?</summary><p>Windows 10 or 11 x64 with PowerShell 7+, Jellyfin Server 10.x, PotPlayer x64 with the potplayer protocol registered, rclone with WinFsp and TorBox and Google Drive remotes, a TorBox API key, and Python 3.11 for the proxy, bridge and panel. Linux, macOS, Docker, Plex, Emby and remote hosting are not in scope. Google Drive sync is optional and TorBox is the primary cloud.</p></details>
+<details><summary>Is it safe to expose the panel or proxy to my local network?</summary><p>No. Both bind to localhost with no login by design, so anyone on the network could control playback or services. Do not expose them without adding authentication and TLS. A Caddy or Cloudflared edge profile for secure remote access is on the roadmap, not part of the current release.</p></details>
+<details><summary>How do I install, update or remove it?</summary><p>Clone the repository and run pwsh -File install.ps1, using -WhatIf first to preview every planned action. The guided alternative is setup-wizard.ps1. To update, stop the stack, pull the latest branch, re-run the installer and re-run the health checks. To remove it, run install.ps1 with -Uninstall. The full lifecycle is in docs/install.md.</p></details>
+<details><summary>Is it free, and what can I use it for?</summary><p>Yes. It is MIT licensed and free to use, modify and distribute, with no warranty. You need your own Jellyfin install, PotPlayer, rclone and a TorBox account. Use it responsibly: play only media you own or have the right to access, and respect the terms of service of TorBox, Jellyfin and any other service you connect. It is not affiliated with those projects.</p></details>
+    </div>
+  </div>
+</section>
+
+<section id="more" class="alt" aria-labelledby="m-h">
+  <div class="wrap">
+    <div class="sec-head rv"><span class="kicker">More by MHJoy99</span><h2 id="m-h">Other open-source tools.</h2></div>
+    <div class="more">
+      <a class="rv" href="https://mhjoy99.github.io/CCUsageX/"><b>CCUsageX</b><span>Claude Code usage dashboard</span></a>
+      <a class="rv" href="https://mhjoy99.github.io/ZipStream-Hub/"><b>ZipStream-Hub</b><span>Stream video from remote ZIPs</span></a>
+      <a class="rv" href="https://mhjoy99.github.io/mirror-leech-telegram-bot-fuse/"><b>mirror-leech-telegram-bot-fuse</b><span>Telegram mirror/leech bot</span></a>
+      <a class="rv" href="https://mhjoy99.github.io/joyvoice/"><b>joyvoice</b><span>Windows voice typing with Gemini</span></a>
+    </div>
+    <p class="note">See everything on the <a href="https://github.com/MHJoy99">MHJoy99 GitHub profile</a>.</p>
+  </div>
+</section>
+
+<section class="final" aria-labelledby="fn-h">
+  <div class="wrap rv">
+    <h2 id="fn-h">Skip the transcode. <span class="grad">Just press Play.</span></h2>
+    <p>Free, MIT licensed and open source. Star the repo, open an issue, or send a small focused PR.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack"><svg fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><use href="#i-github"/></svg>Get it on GitHub</a>
+      <a class="btn" href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/issues">Open an issue</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div>
+        <p><b>jellyfin-torbox-potplayer-stack</b> &middot; MIT License &middot; Copyright &copy; 2026 MHJoy99</p>
+        <p class="small">Not affiliated with Jellyfin, TorBox, PotPlayer or rclone. All trademarks belong to their owners.</p>
+        <p class="small">This website uses cookieless Cloudflare Web Analytics.</p>
+      </div>
+      <ul>
+        <li><a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack">GitHub</a></li>
+        <li><a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/issues">Issues</a></li>
+        <li><a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/LICENSE">License</a></li>
+        <li><a href="https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack/blob/main/CHANGELOG.md">Changelog</a></li>
+        <li><a href="llms.txt">llms.txt</a></li>
+        <li>Built by <a href="https://github.com/MHJoy99">MHJoy99</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+<script src="site.js" defer></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "a2f7f3d589ae4c8688a646d54918b0e7"}'></script>
+</body>
+</html>

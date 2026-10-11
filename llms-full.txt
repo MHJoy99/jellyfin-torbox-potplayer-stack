@@ -1,0 +1,102 @@
+jellyfin-torbox-potplayer-stack (Jellyfin + TorBox + PotPlayer Stack for Windows)
+Website: https://mhjoy99.github.io/jellyfin-torbox-potplayer-stack/
+Repository: https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack
+Author: MHJoy99 (https://github.com/MHJoy99)
+License: MIT (Copyright (c) 2026 MHJoy99)
+
+SUMMARY
+Jellyfin library + TorBox cloud + PotPlayer playback, on Windows, with no transcoding. Cloud torrents mount as local drives (T:\), Jellyfin keeps metadata, resume and Next-Up, and PotPlayer direct-streams full-season 4K through a local proxy. A loopback-only control panel owns start/stop, health and Play-in-PotPlayer.
+
+SCOPE
+In scope: Windows 10/11 x64; Jellyfin 10.x + TorBox + PotPlayer x64 + rclone VFS; PowerShell 7+ and Python 3.11; loopback-only by default.
+Not in scope: Linux, macOS, Docker, Plex, Emby, remote hosting. Google Drive sync is optional and secondary; TorBox is the primary cloud. A Caddy / Cloudflared tunnel edge is roadmap, not current.
+
+HOW IT WORKS (every play follows this chain)
+1. TorBox cloud.
+2. rclone VFS mount (T:\ for TorBox, G:\ for Google Drive; rclone RC on ports 5572 and 5573).
+3. Jellyfin on port 8096 reads .strm files and sidecars, provides TMDB metadata, views, resume, Next-Up and the stream API.
+4. A potplayer:// link (itemId, userId, token, serverUrl) goes to the PotPlayer Bridge on port 18099, which resolves the request and acts as a health gate.
+5. The launcher (potplayer-launcher.ps1) resolves the Jellyfin item GUID, maps the .strm to T:\, refreshes a stale VFS through rclone RC, and picks the TorBox CDN or the proxy fallback.
+6. The TorBox proxy on port 8888 serves a never-expiring local URL (/torbox/{torrent}/{file}/{name}) that answers with a 302 to a fresh CDN link; it also provides /health, a cached /mylist and Prometheus-style /metrics.
+7. PotPlayer x64 plays over direct HTTP or a full-season .dpl playlist. The sync tracker (potplayer-sync-tracker.ps1) posts /Sessions/Playing/Progress to Jellyfin every 5 seconds and marks the episode Played at 80%, so Next-Up advances on every client.
+
+PLAY AN EPISODE END TO END
+1. Open http://127.0.0.1:18080 and click Start all (mounts first, then proxy, bridge, Jellyfin, panel).
+2. Pick a show in Jellyfin at http://127.0.0.1:8096.
+3. Press Play-in-PotPlayer.
+4. The launcher resolves the file and refreshes a stale VFS if needed.
+5. PotPlayer opens a full-season UTF-16 .dpl playlist with /seek= set to your Jellyfin resume position.
+6. Direct HTTP from the proxy streams the file; the seek bar fills (set FULLCACHE=1 for full-file prefetch).
+7. Resume stays in sync every 5 seconds; Played is marked at 80%.
+
+FEATURES
+- TorBox proxy (server/torbox-proxy.py, port 8888): stable local URLs that never expire, fresh CDN links per request, cached mylist.
+- One-click play (potplayer-launcher.ps1 plus bridge on port 18099).
+- Resume sync (potplayer-sync-tracker.ps1): progress every 5 s, Played at 80%.
+- Watch console (show-playback-log.ps1): live tail of launcher and playback ticks.
+- Control panel (control-panel/control_panel.py, port 18080): loopback-only Start/Stop/Restart, status, metrics, Play buttons.
+- Supervisor (supervisor.ps1, modes Run / Start / Stop / Status): ordered start (mounts, proxy, bridge, Jellyfin, panel), watchdog, mutex, PID files.
+- Optional: Google Drive .strm sync, FULLCACHE=1 full-file prefetch, full-season .dpl with /seek= resume, Nagios-style check_*.ps1 probes with -AsJson, an rclone MCP bridge.
+
+PORTS (all loopback-only by default)
+8888 TorBox proxy; 18099 PotPlayer bridge; 18080 control panel; 8096 Jellyfin; 5572 rclone RC (TorBox mount); 5573 rclone RC (Google Drive mount).
+
+REQUIREMENTS
+Windows 10/11 x64 with PowerShell 7+; Jellyfin Server 10.x; PotPlayer x64 with the potplayer:// protocol registered; rclone (with WinFsp) with TorBox and Google Drive remotes; a TorBox API key (Machine or User scope) in the TORBOX_API_KEY environment variable; Python 3.11. About 20 GB of disk headroom for the prefetch cache and Jellyfin data.
+
+INSTALL
+A (one-click, recommended):
+  git clone https://github.com/MHJoy99/jellyfin-torbox-potplayer-stack.git
+  cd jellyfin-torbox-potplayer-stack
+  pwsh -File install.ps1 -WhatIf
+  pwsh -File install.ps1
+B (guided wizard): pwsh -File setup-wizard.ps1
+C (manual): pwsh -File install-all.ps1 ; pwsh -File supervisor.ps1 -Mode Start
+Then open http://127.0.0.1:18080 and click Start all.
+Uninstall: pwsh -File install.ps1 -Uninstall.
+
+CONFIGURATION (environment variables only; no secrets in files)
+TORBOX_API_KEY (required; the proxy refuses to start without it); JELLYFIN_URL (default http://localhost:8096); JELLYFIN_USER and JELLYFIN_PASSWORD (for health checks); JELLYFIN_API_KEY (automation); FULLCACHE (default 0; 1 prefetches the full file); RCLONE_EXE and RCLONE_CONFIG (rclone MCP bridge).
+
+PERFORMANCE DEFAULTS
+rclone VFS: --vfs-cache-mode full, 25G cache cap, 12h max age, 30G min free space, 32M read chunks doubling to 256M, 128M read-ahead, 15m directory cache. Proxy: token-bucket rate limiter, mylist cache for 10 minutes with singleflight coalescing, HTTP/1.0 progressive streaming.
+
+COMPARISON (from the repo's COMPARISON.md)
+This stack is tuned for direct-play control on a Windows home server with cloud-backed libraries, with a first-class external player queue, a local proxy with metrics and a local control panel. Plex and Emby offer polished client apps with paid tiers; plain Jellyfin is a clean open server; Infuse is an Apple-first player. No option wins everywhere.
+
+ROADMAP (planned items are not released)
+VERSION is 1.0.0. Landed under Unreleased: one-click installer, setup wizard, 12-file docs, Windows CI and secret scanning, 9-suite test harness, rescued curation tools, idempotent TorBox mount guard, release toolkit. Planned v1.1: playback timeline CSV export, health bundle, launcher resume accuracy pass. Planned v1.2: multi-user play-state isolation, proxy cache-hit tiles, scheduled backup, subtitle normalizer, metrics exporter. Later: GUI installer, offline metadata cache, read-only mobile view, translation workflow, Jellyfin API SDK. Also on the wish list: Grafana dashboards and a Caddy / Cloudflared edge profile for remote access.
+
+USE RESPONSIBLY
+This is neutral tooling that connects services you already use. Play only media you own or have the right to access, and respect the terms of service of TorBox, Jellyfin, TMDB and any other service you connect. The panel and proxy bind to loopback and have no login by design; do not expose them to your network without authentication and TLS. Keep the TorBox key in environment variables only. Not affiliated with Jellyfin, TorBox, PotPlayer or rclone.
+
+FAQ
+Q: What does this stack do that plain Jellyfin cannot do on Windows?
+A: It mounts TorBox and Google Drive as local drives with rclone, serves fresh CDN URLs through a local proxy on port 8888, and launches PotPlayer with a full-season playlist at your exact resume point. Jellyfin keeps the library, metadata and watched state, while PotPlayer handles 4K direct-stream playback without transcoding or browser codec limits.
+
+Q: Where do I store my TorBox API key so it never leaks to GitHub?
+A: Store it only as a Windows environment variable named TORBOX_API_KEY at User or Machine scope, then restart the proxy and supervisor so child processes inherit it. Never paste the key into scripts, configs, issues or commits. The proxy refuses to start when the variable is empty, and rotation means updating the environment plus registry and restarting the services.
+
+Q: Why does PotPlayer start instantly while Jellyfin Web sometimes buffers on the same file?
+A: Jellyfin Web often remuxes or transcodes high-bitrate 4K REMUX files because of browser codec and subtitle limits, which costs CPU and adds buffering. PotPlayer direct-streams the original file over HTTP from the local TorBox proxy, so it seeks instantly with a full-cache bar and uses negligible server CPU while preserving the original video, audio and subtitle tracks.
+
+Q: How do resume and watched status stay in sync between PotPlayer and Jellyfin?
+A: A lightweight tracker posts the playback position to the Jellyfin Sessions Playing Progress endpoint every five seconds while PotPlayer runs. When you pass eighty percent, it marks the episode Played, so Next-Up advances and other clients resume correctly. You can verify it live in the watch console, show-playback-log.ps1.
+
+Q: What should I do when the T drive looks stale or libraries are empty after a reboot?
+A: Start the mounts before Jellyfin, because a scan that races a downed VFS indexes stub files and empty views. Verify the drive paths exist, refresh the rclone RC cache on ports 5572 and 5573, confirm proxy health on port 8888, then trigger a Jellyfin library refresh. The included check scripts return Nagios-style exit codes and JSON for fast automated checks.
+
+Q: What do I need installed, and which systems are supported?
+A: Windows 10 or 11 x64 with PowerShell 7+, Jellyfin Server 10.x, PotPlayer x64 with the potplayer protocol registered, rclone with WinFsp and TorBox and Google Drive remotes, a TorBox API key, and Python 3.11 for the proxy, bridge and panel. Linux, macOS, Docker, Plex, Emby and remote hosting are not in scope. Google Drive sync is optional and TorBox is the primary cloud.
+
+Q: Is it safe to expose the panel or proxy to my local network?
+A: No. Both bind to localhost with no login by design, so anyone on the network could control playback or services. Do not expose them without adding authentication and TLS. A Caddy or Cloudflared edge profile for secure remote access is on the roadmap, not part of the current release.
+
+Q: How do I install, update or remove it?
+A: Clone the repository and run pwsh -File install.ps1, using -WhatIf first to preview every planned action. The guided alternative is setup-wizard.ps1. To update, stop the stack, pull the latest branch, re-run the installer and re-run the health checks. To remove it, run install.ps1 with -Uninstall. The full lifecycle is in docs/install.md.
+
+Q: Is it free, and what can I use it for?
+A: Yes. It is MIT licensed and free to use, modify and distribute, with no warranty. You need your own Jellyfin install, PotPlayer, rclone and a TorBox account. Use it responsibly: play only media you own or have the right to access, and respect the terms of service of TorBox, Jellyfin and any other service you connect. It is not affiliated with those projects.
+
+CREDITS
+Jellyfin (https://jellyfin.org/), TorBox (https://torbox.app/), rclone (https://rclone.org/), PotPlayer (https://potplayer.daum.net/).
